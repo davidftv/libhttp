@@ -4,9 +4,9 @@
 
 int main()
 {
-	printf("hello\n");
 	struct http_data *hd = http_create();
-	http_set_uri(hd, "https://www.securepilot.com:92/hello?kkk");
+	http_set_uri(hd, "https://www.google.com/");
+	//http_set_uri(hd, "http://www.securepilot.com/");
 	http_perform(hd);
 	return 0;
 }
