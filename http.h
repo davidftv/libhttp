@@ -16,6 +16,9 @@
 #include <openssl/ssl2.h>
 #endif //HAVE_OPENSSL
 
+
+#define HTTP_HEADER_NUM 32
+
 #define HTTP_PATH_LEN	512
 #define HTTP_HOST_LEN	512
 
@@ -65,6 +68,11 @@ struct http_uri {
 struct hdb {
 	int					req_type;
 	char				req[HTTP_HEADER_LEN];
+    char                *header[HTTP_HEADER_NUM];
+    int                 header_count;
+    char                version[8];
+    char                code[8];
+    char                phrase[32];
 	struct {
 		int				size;
 		char			*start;
