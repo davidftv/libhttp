@@ -7,6 +7,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <string.h>
+#include <ctype.h>
+
 #include "http.h"
 
 
@@ -36,7 +38,31 @@ int http_set_uri(struct http_data *hd, char *uri) {
     }
     return -1;
 }
+char *http_skip_blank(char *ptr)
+{
+    while(*ptr == ' ') ptr ++;
 
+    return ptr;
+}
+int http_find_header(struct http_data *hd, char *title, char *out) {
+    int count = 0;
+    char *header = NULL;
+    char *ptr = NULL;
+    if(title == NULL || out == NULL) return -1;
+    for(count = 0; count < hd->http.header_count; count ++){
+        header = hd->http.header[count];
+        if(strncasecmp(header, title, strlen(title)) == 0){
+            if((ptr = strchr(header, ':')) != NULL) {
+                ptr ++;
+                ptr = http_skip_blank(ptr);
+                strcpy(out, ptr);
+            }
+            return 0;
+        }
+    }
+    LOG("Header %s not found\n", title);
+    return -1;
+}
 int http_send(struct http_data *hd, void *buf, int len) {
     int ret = -1, sent = 0;
     if(hd->sk > 0){
@@ -274,6 +300,22 @@ void destroy_http(struct http_data *hd) {
     }
 }
 
+void http_destroy_hd(struct http_data *hd) {
+    int i = 0;
+    for (i = 0; i < hd->http.header_count; i++) {
+        if(hd->http.header[i] != NULL) {
+            free(hd->http.header[i]);
+            hd->http.header[i] = NULL;
+        }
+    }
+    if(hd->http.body.start != NULL) {
+        free(hd->http.body.start);
+        hd->http.body.start = NULL;
+    }
+
+    hd->http.body.size = 0;
+}
+
 int http_send_req(struct http_data *hd) {
     char    *header;
     int     len;
@@ -287,13 +329,12 @@ int http_send_req(struct http_data *hd) {
                 "Connection: close\r\n"
                 "\r\n\r\n", hd->uri.path, hd->uri.host);
     }
-    printf("\n=====================\n%s\n=====================\n", header);
+    //printf("\n=====================\n%s\n=====================\n", header);
     hd->send(hd, header, len);
     return 0;
 }
 int http_add_header(struct http_data *hd, char *header)
 {
-    char *ptr;
     char *ver;
     char *code;
     char *phrase;
@@ -316,35 +357,59 @@ int http_add_header(struct http_data *hd, char *header)
             strcpy(hd->http.phrase, phrase);
             //LOG("version %s / code %s / phrase %s\n", hd->http.version, hd->http.code, hd->http.phrase);
         }else{
-            printf("|%s|\n", header);
+            hd->http.header[hd->http.header_count++] = strdup(header);
+            //printf("|%s|\n", header);
         }
     }
+    return 0;
 }
 int http_recv_resp(struct http_data *hd) {
-    char buf[HTTP_RECV_BUF];
-    char *start = buf;
-    int len;
-    char *header;
-    char *next_line;
+    char    buf[HTTP_RECV_BUF];
+    char    *head  = buf;
+    char    *start = buf;
+    int     len;
+    char    *header;
+    char    *next_line;
+    int     header_parsed = 0;
+    int     read_count = 0;
     for(;;)
     {
         memset(buf, 0, HTTP_RECV_BUF);
         len = hd->recv(hd, buf, HTTP_RECV_BUF);
         if(len > 0){
-            while( (next_line = strstr(start, "\r\n")) != NULL )  {
-                *next_line = '\0';
-                next_line += 2;
-                header = start;
-                if(*header == '\0'){
-                    break;
-                }else{
-                    http_add_header(hd, header);
+            LOG("%s\n",buf);
+            if(header_parsed == 0) {
+                while( (next_line = strstr(start, "\r\n")) != NULL )  {
+                    header_parsed = 1;
+                    *next_line = '\0';
+                    next_line += 2;
+                    header = start;
+                    if(*header == '\0'){
+                        break;
+                    }else{
+                        http_add_header(hd, header);
+                    }
+                    start = next_line;
                 }
-                start = next_line;
+                if(header_parsed  == 1){
+                    start = next_line;
+                    hd->http.body.size = start - head;
+                    hd->http.body.start = malloc(hd->http.body.size);
+                    if(hd->http.body.start){
+                        memcpy(hd->http.body.start, start , hd->http.body.size);
+                        printf("%s\n", hd->http.body.start);
+                    }
+                }
+            }else{
+                //FIXME
+                char content_len[32]; 
+                if(http_find_header(hd, "Content-Length",content_len)==0) {
+                    
+                }
             }
-            start = next_line;
-            LOG("\n===================== length %d\n%s\n=====================\n", len, start);
+            //LOG("\n===================== length %d\n%s\n=====================\n", len, start);
         }
+        read_count ++;
         if(len == 0) break;
     }
     return 0;
@@ -352,10 +417,9 @@ int http_recv_resp(struct http_data *hd) {
 
 int http_perform(struct http_data *hd) {
     struct hostent *server = NULL;
-    fd_set  fset;
-    int err;
-    struct timeval tv;
     int ret = 0;
+    int i = 0;
+    char loc[HTTP_HOST_LEN];
     if(http_host_parse(hd) != 0) {
         LOG("Error: URL parsing error!\nHOST:%s\nPORT:%d\nPATH:%s\n",
             hd->uri.host, hd->uri.port, hd->uri.path);
@@ -376,30 +440,13 @@ int http_perform(struct http_data *hd) {
         LOG("Error: create socket failure %d\n", hd->sk);
         return -1;
     }
-    http_nonblock_socket(hd->sk);
+    //http_nonblock_socket(hd->sk);
     if(connect(hd->sk, (struct sockaddr *)&(hd->srv_addr), sizeof(struct sockaddr)) == -1 &&
          errno != EINPROGRESS) {
         LOG("Error: Cannot connect to server\n");
         destroy_http(hd);
         return -1;
     }
-    tv.tv_sec = hd->tv.tv_sec;
-    tv.tv_usec = 0;
-    if( (ret = select(hd->sk + 1, NULL, &fset, NULL, &tv)) > 0) {
-        socklen_t elen;
-        getsockopt(hd->sk, SOL_SOCKET, SO_ERROR, &err, &elen);
-        if(err != 0) {
-            LOG("Error: getsocketopt failure\n");
-            destroy_http(hd);
-            return -1;
-        }
-    }else{
-        LOG("Error: Connection timeout\n");
-        destroy_http(hd);
-        return -1;
-    }
-    LOG("Connected to server\n");
-    http_block_socket(hd->sk);
     if(hd->uri.proto == PROTO_HTTPS) {
 #ifdef HAVE_OPENSSL
         if(http_ssl_setup(hd) == -1){
@@ -409,11 +456,47 @@ int http_perform(struct http_data *hd) {
         }
 #endif //HAVE_OPENSSL
     }
-    for(;;){
+    for(;;) {
+        // Clear hd header and body start
+        for (i = 0; i < hd->http.header_count; i++) {
+            if(hd->http.header[i] != NULL) {
+                free(hd->http.header[i]);
+                hd->http.header[i] = NULL;
+            }
+        }
+        if(hd->http.body.start != NULL) {
+            free(hd->http.body.start);
+            hd->http.body.start = NULL;
+        }
+
+        hd->http.body.size = 0;
+        //hd->http.code = 0;
+        // Clear hd header and body end
         ret = http_send_req(hd);
         if(ret == 0) {
             ret = http_recv_resp(hd);
-            break;
+            if(ret == 0){
+                int code = atoi(hd->http.code);
+                switch(code){
+                    case 302:
+                        LOG("GOT 302 redirect\n");
+                        memset(loc, 0, HTTP_HOST_LEN);
+                        http_find_header(hd, "Location:", loc);
+                        struct http_data *hd2 = http_create();
+                        http_set_uri(hd2, loc);
+                        http_perform(hd2);
+                        http_destroy_hd(hd2);
+                        LOG("===========================302 returned\n");
+                        break;
+                    case 200:
+                    case 401:
+                    case 404:
+                        break;
+                    default:
+                        break;
+                }
+                break;
+            }
         }else{
             LOG("Error: send http request error\n");
         }
