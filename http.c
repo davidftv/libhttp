@@ -14,8 +14,13 @@
 
 
 struct http_data *http_create() {
+	int i = 0;
     struct http_data *hd = malloc(sizeof(struct http_data));
     memset(hd, 0, sizeof(struct http_data));
+	hd->http.body.start = NULL;
+	for(i = 0; i < HTTP_HEADER_NUM ; i++) {
+		hd->http.header[i] = NULL;
+	}
     hd->tv.tv_sec = HTTP_TIMEOUT;
     return hd;
 }
@@ -60,7 +65,7 @@ int http_find_header(struct http_data *hd, char *title, char *out) {
             return 0;
         }
     }
-    LOG("Header %s not found\n", title);
+    //LOG("Header %s not found\n", title);
     return -1;
 }
 int http_send(struct http_data *hd, void *buf, int len) {
@@ -156,7 +161,7 @@ int http_host_parse(struct http_data *hd) {
         if(strncasecmp(hd->uri.server, "https://", 8) == 0){
             hd->uri.proto = PROTO_HTTPS;
             host = serv + strlen("https://");;
-            LOG("perform a https request\n");
+            //LOG("perform a https request\n");
 #ifdef HAVE_OPENSSL
             hd->send = https_send;
             hd->recv = https_recv;
@@ -166,7 +171,7 @@ int http_host_parse(struct http_data *hd) {
         }else if(strncasecmp(hd->uri.server, "http://", 7) == 0){
             hd->uri.proto = PROTO_HTTP;
             host = serv + strlen("http://");;
-            LOG("perform a http request\n");
+            //LOG("perform a http request\n");
             hd->send = http_send;
             hd->recv = http_recv;
         }else{
@@ -301,6 +306,7 @@ void destroy_http(struct http_data *hd) {
 }
 
 void http_destroy_hd(struct http_data *hd) {
+	if(hd == NULL) return;
     int i = 0;
     for (i = 0; i < hd->http.header_count; i++) {
         if(hd->http.header[i] != NULL) {
@@ -314,6 +320,7 @@ void http_destroy_hd(struct http_data *hd) {
     }
 
     hd->http.body.size = 0;
+	free(hd);
 }
 
 int http_send_req(struct http_data *hd) {
@@ -329,7 +336,6 @@ int http_send_req(struct http_data *hd) {
                 "Connection: close\r\n"
                 "\r\n\r\n", hd->uri.path, hd->uri.host);
     }
-    //printf("\n=====================\n%s\n=====================\n", header);
     hd->send(hd, header, len);
     return 0;
 }
@@ -377,7 +383,6 @@ int http_recv_resp(struct http_data *hd) {
         memset(buf, 0, HTTP_RECV_BUF);
         len = hd->recv(hd, buf, HTTP_RECV_BUF);
         if(len > 0){
-            LOG("%s\n",buf);
             if(header_parsed == 0) {
                 while( (next_line = strstr(start, "\r\n")) != NULL )  {
                     header_parsed = 1;
@@ -393,25 +398,36 @@ int http_recv_resp(struct http_data *hd) {
                 }
                 if(header_parsed  == 1){
                     start = next_line;
-                    hd->http.body.size = start - head;
+                    hd->http.body.size = len - (start - head);
                     hd->http.body.start = malloc(hd->http.body.size);
                     if(hd->http.body.start){
                         memcpy(hd->http.body.start, start , hd->http.body.size);
-                        printf("%s\n", hd->http.body.start);
                     }
                 }
             }else{
-                //FIXME
-                char content_len[32]; 
-                if(http_find_header(hd, "Content-Length",content_len)==0) {
-                    
-                }
+				if(hd->http.body.start == NULL) {
+					char *ptr = malloc(len + 1);
+					hd->http.body.start = ptr;
+					memcpy(hd->http.body.start, buf, len);
+					hd->http.body.size += len;
+					hd->http.body.start[hd->http.body.size] = '\0';
+				}else{
+					char *ptr = realloc(hd->http.body.start, hd->http.body.size + len);
+					hd->http.body.start = ptr;
+					memcpy(ptr + hd->http.body.size , buf, len);
+					hd->http.body.size += len;
+				}
             }
-            //LOG("\n===================== length %d\n%s\n=====================\n", len, start);
         }
+printf("%s%d\n",__FILE__,__LINE__);
         read_count ++;
         if(len == 0) break;
     }
+#if 0
+	printf( "\n=========================================\n" \
+			"%s\n" \
+			"================Length: %d ==============\n",hd->http.body.start, hd->http.body.size);
+#endif
     return 0;
 }
 
@@ -423,9 +439,11 @@ int http_perform(struct http_data *hd) {
     if(http_host_parse(hd) != 0) {
         LOG("Error: URL parsing error!\nHOST:%s\nPORT:%d\nPATH:%s\n",
             hd->uri.host, hd->uri.port, hd->uri.path);
+#if 0
     }else{
         LOG("Connect to\nHOST:%s\nPORT:%d\nPATH:%s\n",
             hd->uri.host, hd->uri.port, hd->uri.path);
+#endif
     }
     server = gethostbyname(hd->uri.host);
     if(server == NULL) {
@@ -457,21 +475,6 @@ int http_perform(struct http_data *hd) {
 #endif //HAVE_OPENSSL
     }
     for(;;) {
-        // Clear hd header and body start
-        for (i = 0; i < hd->http.header_count; i++) {
-            if(hd->http.header[i] != NULL) {
-                free(hd->http.header[i]);
-                hd->http.header[i] = NULL;
-            }
-        }
-        if(hd->http.body.start != NULL) {
-            free(hd->http.body.start);
-            hd->http.body.start = NULL;
-        }
-
-        hd->http.body.size = 0;
-        //hd->http.code = 0;
-        // Clear hd header and body end
         ret = http_send_req(hd);
         if(ret == 0) {
             ret = http_recv_resp(hd);
@@ -483,12 +486,17 @@ int http_perform(struct http_data *hd) {
                         memset(loc, 0, HTTP_HOST_LEN);
                         http_find_header(hd, "Location:", loc);
                         struct http_data *hd2 = http_create();
+
                         http_set_uri(hd2, loc);
                         http_perform(hd2);
+						//if(hd->http.body.start != NULL) free(hd->http.body.start);
+
+						hd->http.body.start = malloc(hd2->http.body.size);
+						memcpy(hd->http.body.start, hd2->http.body.start, hd2->http.body.size);
                         http_destroy_hd(hd2);
-                        LOG("===========================302 returned\n");
                         break;
                     case 200:
+						break;
                     case 401:
                     case 404:
                         break;

@@ -23,7 +23,7 @@
 #define HTTP_HOST_LEN	512
 
 #define HTTP_URI_LEN	1024
-#define HTTP_RECV_BUF	1400
+#define HTTP_RECV_BUF	4096
 
 #define HTTP_HEADER_LEN	512
 
