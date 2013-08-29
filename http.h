@@ -18,12 +18,16 @@
 
 
 #define HTTP_HEADER_NUM 32
+#define HTTP_NONCE_LEN	34
+#define HTTP_USER_LEN	64
+#define HTTP_PASS_LEN	64
 
+#define HTTP_AUTH_LEN	128
 #define HTTP_PATH_LEN	512
 #define HTTP_HOST_LEN	512
 
 #define HTTP_URI_LEN	1024
-#define HTTP_RECV_BUF	4096
+#define HTTP_RECV_BUF	1400
 
 #define HTTP_HEADER_LEN	512
 
@@ -32,10 +36,11 @@
 
 #define FILE_PATH_LEN	128
 
-#define HTTP_TIMEOUT	3
+#define HTTP_TIMEOUT	5
 
-#define SSL_DEPTH 1
+#define SSL_DEPTH 		1
 #define SSL_KEY_PW_LEN	64
+#define SSL_DATA_LEN	256
 
 #ifdef DEBUG_HTTP
 #define LOG printf
@@ -57,6 +62,11 @@ enum{
 	HTTP_DELETE
 };
 
+enum{
+	HTTP_AUTH_DIGEST,
+	HTTP_AUTH_BASIC
+};
+
 struct http_uri {
 	int					proto;
 	char 				url[HTTP_URI_LEN];
@@ -73,6 +83,10 @@ struct hdb {
     char                version[8];
     char                code[8];
     char                phrase[32];
+	char				auth[8];
+	char				realm[16];
+	char				nonce[HTTP_NONCE_LEN];
+	char				chunked;
 	struct {
 		int				size;
 		char			*start;
@@ -83,10 +97,13 @@ struct http_data {
 	struct sockaddr_in 	srv_addr;
 	struct http_uri		uri;
 	struct timeval 		tv;
+	int					phase;
 	int					cert_auth;
 	char				cert_path[FILE_PATH_LEN];
 	char				key_path[FILE_PATH_LEN];
 	char				passwd[SSL_KEY_PW_LEN];
+	char				username[HTTP_USER_LEN];
+	char				password[HTTP_PASS_LEN];
 	int (*send)(struct http_data *, void *, int);
 	int (*recv)(struct http_data *, void *, int);
 #ifdef HAVE_OPENSSL
@@ -100,5 +117,7 @@ struct http_data {
 struct http_data *http_create();
 int http_set_uri(struct http_data *hd, char *uri);
 int http_perform(struct http_data *hd);
-
+int http_set_method(struct http_data *hd, int type);
+void http_destroy_hd(struct http_data *hd);
+int http_set_user_pass(struct http_data *hd, char *user, char *pass);
 #endif

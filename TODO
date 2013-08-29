@@ -1,7 +1,6 @@
 20130822
-* add large content recv
 * check ssl cert/key working
-* implement POST/PUT/DELETE method
-* implement 302 redirect
+* implement PUT/DELETE method
 * implement 404 not found
-* implement 401 unauthorized and basic/digest authentication
+* implement 401 unauthorized and basic authentication
+* add parameter on header function
