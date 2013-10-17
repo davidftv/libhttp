@@ -14,13 +14,18 @@
 
 
 struct http_data *http_create() {
-	int i = 0;
+    int i = 0;
     struct http_data *hd = malloc(sizeof(struct http_data));
     memset(hd, 0, sizeof(struct http_data));
-	hd->http.body.start = NULL;
-	for(i = 0; i < HTTP_HEADER_NUM ; i++) {
-		hd->http.header[i] = NULL;
-	}
+    hd->http.body.start = NULL;
+    hd->http.body.size = 0;
+    hd->http.body.offset = 0;
+    hd->http.buf_offset = 0;
+    hd->body_send_len = 0;
+    hd->body_send = NULL;
+    for(i = 0; i < HTTP_HEADER_NUM ; i++) {
+        hd->http.header[i] = NULL;
+    }
     hd->tv.tv_sec = HTTP_TIMEOUT;
     return hd;
 }
@@ -47,8 +52,8 @@ int http_set_uri(struct http_data *hd, char *uri) {
 
 char *http_skip_break(char *ptr)
 {
-	while(*ptr == '\r' || *ptr == '\n') ptr ++;
-	return ptr;
+    while(*ptr == '\r' || *ptr == '\n') ptr ++;
+    return ptr;
 }
 
 char *http_skip_blank(char *ptr)
@@ -106,8 +111,7 @@ int http_recv(struct http_data *hd, void *buf, int len) {
         if(ret > 0){
             ret = recv(hd->sk, buf, len, 0);
             if(ret <= 0) {
-                //LOG("Error: receive data failure %s\n", strerror(errno));
-                return ret;
+                LOG("Error: receive data failure %s\n", strerror(errno));
             }
         }else{
             LOG("Error: select socket failure %s\n", strerror(errno));
@@ -151,8 +155,7 @@ int https_recv(struct http_data *hd, void *buf, int len) {
         if(ret > 0){
             ret = SSL_read(hd->ssl, buf, len);
             if(ret <= 0) {
-                //LOG("Error: receive data failure %s\n", strerror(errno));
-                return ret;
+                LOG("Error: receive data failure %s\n", strerror(errno));
             }
         }else{
             LOG("Error: select socket failure %s\n", strerror(errno));
@@ -319,7 +322,7 @@ void destroy_http(struct http_data *hd) {
 
 void http_clean_hd(struct http_data *hd)
 {
-	if(hd == NULL) return;
+    if(hd == NULL) return;
     int i = 0;
     for (i = 0; i < hd->http.header_count; i++) {
         if(hd->http.header[i] != NULL) {
@@ -331,93 +334,137 @@ void http_clean_hd(struct http_data *hd)
         free(hd->http.body.start);
         hd->http.body.start = NULL;
     }
-
+    if(hd->body_send != NULL) {
+        free(hd->body_send);
+        hd->body_send = NULL;
+    }
+    hd->http.content_len = 0;
+    hd->http.body.offset = 0;
     hd->http.body.size = 0;
+    hd->body_send_len = 0;
 }
 void http_destroy_hd(struct http_data *hd) {
-	http_clean_hd(hd);
-	free(hd);
+    http_clean_hd(hd);
+    free(hd);
 }
 
 int http_set_user_pass(struct http_data *hd, char *user, char *pass)
 {
-	if(hd!=NULL && user!=NULL && pass!=NULL) {
-		strncpy(hd->username, user, HTTP_USER_LEN);
-		strncpy(hd->password, pass, HTTP_PASS_LEN);
-		return 0;
-	}
-	return -1;
+    if(hd!=NULL && user!=NULL && pass!=NULL) {
+        strncpy(hd->username, user, HTTP_USER_LEN);
+        strncpy(hd->password, pass, HTTP_PASS_LEN);
+        return 0;
+    }
+    return -1;
 }
 int http_copy_field(char *in, char *out, int len)
 {
-	int count = 0;
-	if(in != NULL && out != NULL) {
-		for(count = 0; count < len; count ++) {
-			if(in[count] != '"') {
-				out[count] = in[count];
-			}else{
-				break;
-			}
-		}
-		return 0;
-	}
-	return -1;
+    int count = 0;
+    if(in != NULL && out != NULL) {
+        for(count = 0; count < len; count ++) {
+            if(in[count] != '"') {
+                out[count] = in[count];
+            }else{
+                break;
+            }
+        }
+        return 0;
+    }
+    return -1;
 }
 int http_parse_auth(struct http_data *hd)
 {
-	char *ptr;
-	char *realm;
-	char *nonce;
-	char auth_str[HTTP_AUTH_LEN];
-	if(http_find_header(hd, "WWW-Authenticate", auth_str)==0) {
-		ptr = auth_str;
-		if(strncmp(auth_str, "Digest", strlen("Digest") )==0) {
-			strcpy(hd->http.auth,"Digest");
-			if((realm = strstr(ptr, "realm")) != NULL) {
-				realm = realm + strlen("realm:\"");
-				http_copy_field(realm, hd->http.realm, HTTP_AUTH_LEN);
-			}
-			if((nonce = strstr(ptr, "nonce")) != NULL) {
-				nonce = nonce + strlen("nonce:\"");
-				http_copy_field(nonce, hd->http.nonce, HTTP_AUTH_LEN);
-			}
-		}else if(strncmp(auth_str, "Basic", strlen("Basic") )==0) {
-			strcpy(hd->http.auth,"Basic");
-		}
-	}
-	return 0;
+    char *ptr;
+    char *realm;
+    char *nonce;
+    char auth_str[HTTP_AUTH_LEN];
+    if(http_find_header(hd, "WWW-Authenticate", auth_str)==0) {
+        ptr = auth_str;
+        if(strncmp(auth_str, "Digest", strlen("Digest") )==0) {
+            strcpy(hd->http.auth,"Digest");
+            if((realm = strstr(ptr, "realm")) != NULL) {
+                realm = realm + strlen("realm:\"");
+                http_copy_field(realm, hd->http.realm, HTTP_AUTH_LEN);
+            }
+            if((nonce = strstr(ptr, "nonce")) != NULL) {
+                nonce = nonce + strlen("nonce:\"");
+                http_copy_field(nonce, hd->http.nonce, HTTP_AUTH_LEN);
+            }
+        }else if(strncmp(auth_str, "Basic", strlen("Basic") )==0) {
+            strcpy(hd->http.auth,"Basic");
+        }
+    }
+    return 0;
 }
 
 int http_set_method(struct http_data *hd, int type)
 {
-	if(hd == NULL || type < HTTP_GET || type > HTTP_DELETE) {
-		return -1;
-	}
-	hd->http.req_type = type;
-	return 0;
+    if(hd == NULL || type < HTTP_GET || type > HTTP_DELETE) {
+        return -1;
+    }
+    hd->http.req_type = type;
+    return 0;
 }
-
+int http_set_body(struct http_data *hd, void *data, int len) {
+    if(hd){
+        if(hd->body_send == NULL){
+            hd->body_send = malloc(len);
+            memcpy(hd->body_send, data, len);
+            hd->body_send_len = len;
+        }else{
+            char *tmp = realloc(hd->body_send, len);
+            if(tmp){
+                hd->body_send = tmp;
+                hd->body_send_len = len;
+            }else{
+                DBG("Out of memory\n");
+                return -1;
+            }
+        }
+        return 0;
+    }
+    return  -1;
+}
 int http_send_req(struct http_data *hd) {
     char    *header;
     int     len;
     header = hd->http.req;
     if(hd->http.req_type == HTTP_GET) {
         len = snprintf(header, HTTP_HEADER_LEN, "GET %s HTTP/1.1\r\n"
-                "Host: %s:%d\r\n"
+                "Host: %s\r\n"
                 "Accept: */*\r\n"
                 "User-Agent: Kaija/Agent\r\n"
-                "\r\n\r\n", hd->uri.path, hd->uri.host,hd->uri.port);
+                "\r\n\r\n", hd->uri.path, hd->uri.host);
     }else if(hd->http.req_type == HTTP_POST) {
         len = snprintf(header, HTTP_HEADER_LEN, "POST %s HTTP/1.1\r\n"
                 "Host: %s:%d\r\n"
                 "Accept: */*\r\n"
                 "User-Agent: Kaija/Agent\r\n"
+                "Content-Type: application/x-www-form-urlencoded\r\n"
                 "\r\n", hd->uri.path, hd->uri.host, hd->uri.port);
     }
+    if(hd->body_send_len > 0){
+        int send_byte = hd->body_send_len + len + 1; // header \r\n body \r\n preserve 4 bytes
+        char *http_data = malloc(send_byte);
+        if(http_data){
+            memcpy(http_data, header, len);
+            memcpy(http_data + len , hd->body_send, hd->body_send_len);
+            send_byte--;
+            DBG("Data %d bytes send\n", send_byte );
+        }else{
+            DBG("Out of memory\n");
+            return -1;
+        }
 #ifdef DEBUG_HTTP
-	LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
+        LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", http_data);
 #endif
-    hd->send(hd, header, len);
+        hd->send(hd, http_data, send_byte);
+    }else{
+#ifdef DEBUG_HTTP
+        LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
+#endif
+        hd->send(hd, header, len);
+    }
     return 0;
 }
 
@@ -445,78 +492,97 @@ int http_md5sum(char *input, int len, char *out)
 int http_send_auth_req(struct http_data *hd) {
     char    *header;
     int     len;
-	char	ha1[HTTP_NONCE_LEN];
-	char	ha2[HTTP_NONCE_LEN];
-	char	response[HTTP_NONCE_LEN];
-	char	cnonce[HTTP_NONCE_LEN];
-	char	str[HTTP_HEADER_LEN];
-	memset(cnonce, 0, HTTP_NONCE_LEN);
-	memset(str, 0, HTTP_HEADER_LEN);
-	len = sprintf(cnonce, "%s:%s:%s",hd->username, hd->http.realm, hd->password);
-	http_md5sum(cnonce, len ,ha1);
+    char    ha1[HTTP_NONCE_LEN];
+    char    ha2[HTTP_NONCE_LEN];
+    char    response[HTTP_NONCE_LEN];
+    char    cnonce[HTTP_NONCE_LEN];
+    char    str[HTTP_HEADER_LEN];
+    memset(cnonce, 0, HTTP_NONCE_LEN);
+    memset(str, 0, HTTP_HEADER_LEN);
+    len = sprintf(cnonce, "%s:%s:%s",hd->username, hd->http.realm, hd->password);
+    http_md5sum(cnonce, len ,ha1);
 
     header = hd->http.req;
     if(hd->http.req_type == HTTP_GET) {
-		memset(str, 0, HTTP_HEADER_LEN);
-		len = sprintf(str, "GET:%s",hd->uri.path);
-		http_md5sum(str, len ,ha2);
-		memset(cnonce, 0, HTTP_NONCE_LEN);
-		sprintf(cnonce, "%lld", (long long)time(NULL));
-		http_md5sum(cnonce, strlen(cnonce), cnonce);
-		memset(str, 0, HTTP_HEADER_LEN);
-		len = sprintf(str, "%s:%s:00000001:%s:%s:%s",ha1, hd->http.nonce, cnonce, "auth",ha2);
-		http_md5sum(str, len ,response);
+        memset(str, 0, HTTP_HEADER_LEN);
+        len = sprintf(str, "GET:%s",hd->uri.path);
+        http_md5sum(str, len ,ha2);
+        memset(cnonce, 0, HTTP_NONCE_LEN);
+        sprintf(cnonce, "%lld", (long long)time(NULL));
+        http_md5sum(cnonce, strlen(cnonce), cnonce);
+        memset(str, 0, HTTP_HEADER_LEN);
+        len = sprintf(str, "%s:%s:00000001:%s:%s:%s",ha1, hd->http.nonce, cnonce, "auth",ha2);
+        http_md5sum(str, len ,response);
 
 
-		//http_md5sum(str, len ,cnonce);
+        //http_md5sum(str, len ,cnonce);
         len = snprintf(header, HTTP_HEADER_LEN,
-			"GET %s HTTP/1.1\r\n"
-			"Authorization: %s username=\"%s\", realm=\"%s\","
-			"nonce=\"%s\", uri=\"%s\","
-			"cnonce=\"%s\", nc=00000001, qop=auth,"
-			"response=\"%s\"\r\n"
+            "GET %s HTTP/1.1\r\n"
+            "Authorization: %s username=\"%s\", realm=\"%s\","
+            "nonce=\"%s\", uri=\"%s\","
+            "cnonce=\"%s\", nc=00000001, qop=auth,"
+            "response=\"%s\"\r\n"
             "User-Agent: Kaija/Agent\r\n"
             "Host: %s:%d\r\n"
             "Accept: */*\r\n\r\n\r\n",
-			hd->uri.path,
-			hd->http.auth, hd->username, hd->http.realm,
-			hd->http.nonce, hd->uri.path,
-			cnonce,
-			response,
-			hd->uri.host,hd->uri.port);
+            hd->uri.path,
+            hd->http.auth, hd->username, hd->http.realm,
+            hd->http.nonce, hd->uri.path,
+            cnonce,
+            response,
+            hd->uri.host,hd->uri.port);
     }else if(hd->http.req_type == HTTP_POST) {
-		memset(str, 0, HTTP_HEADER_LEN);
-		len = sprintf(str, "POST:%s",hd->uri.path);
-		http_md5sum(str, len ,ha2);
-		memset(cnonce, 0, HTTP_NONCE_LEN);
-		sprintf(cnonce, "%lld", (long long)time(NULL));
-		http_md5sum(cnonce, strlen(cnonce), cnonce);
-		memset(str, 0, HTTP_HEADER_LEN);
-		len = sprintf(str, "%s:%s:00000001:%s:%s:%s",ha1, hd->http.nonce, cnonce, "auth",ha2);
-		http_md5sum(str, len ,response);
+        memset(str, 0, HTTP_HEADER_LEN);
+        len = sprintf(str, "POST:%s",hd->uri.path);
+        http_md5sum(str, len ,ha2);
+        memset(cnonce, 0, HTTP_NONCE_LEN);
+        sprintf(cnonce, "%lld", (long long)time(NULL));
+        http_md5sum(cnonce, strlen(cnonce), cnonce);
+        memset(str, 0, HTTP_HEADER_LEN);
+        len = sprintf(str, "%s:%s:00000001:%s:%s:%s",ha1, hd->http.nonce, cnonce, "auth",ha2);
+        http_md5sum(str, len ,response);
 
 
-		//http_md5sum(str, len ,cnonce);
+        //http_md5sum(str, len ,cnonce);
         len = snprintf(header, HTTP_HEADER_LEN,
-			"POST %s HTTP/1.1\r\n"
-			"Authorization: %s username=\"%s\", realm=\"%s\","
-			"nonce=\"%s\", uri=\"%s\","
-			"cnonce=\"%s\", nc=00000001, qop=auth,"
-			"response=\"%s\"\r\n"
+            "POST %s HTTP/1.1\r\n"
+            "Authorization: %s username=\"%s\", realm=\"%s\","
+            "nonce=\"%s\", uri=\"%s\","
+            "cnonce=\"%s\", nc=00000001, qop=auth,"
+            "response=\"%s\"\r\n"
             "User-Agent: Kaija/Agent\r\n"
+            "Content-Type: application/x-www-form-urlencoded\r\n"
             "Host: %s:%d\r\n"
-            "Accept: */*\r\n\r\n\r\n",
-			hd->uri.path,
-			hd->http.auth, hd->username, hd->http.realm,
-			hd->http.nonce, hd->uri.path,
-			cnonce,
-			response,
-			hd->uri.host,hd->uri.port);
+            "Accept: */*\r\n\r\n",
+            hd->uri.path,
+            hd->http.auth, hd->username, hd->http.realm,
+            hd->http.nonce, hd->uri.path,
+            cnonce,
+            response,
+            hd->uri.host,hd->uri.port);
     }
+    if(hd->body_send_len > 0){
+        int send_byte = hd->body_send_len + len + 1; // header \r\n body \r\n preserve 4 bytes
+        char *http_data = malloc(send_byte);
+        if(http_data){
+            memcpy(http_data, header, len);
+            memcpy(http_data + len , hd->body_send, hd->body_send_len);
+            send_byte --;
+            DBG("Data %d bytes send\n", send_byte);
+        }else{
+            DBG("Out of memory\n");
+            return -1;
+        }
 #ifdef DEBUG_HTTP
-	LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
+        LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", http_data);
 #endif
-    hd->send(hd, header, len);
+        hd->send(hd, http_data, send_byte);
+    }else{
+#ifdef DEBUG_HTTP
+        LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
+#endif
+        hd->send(hd, header, len);
+    }
     return 0;
 }
 
@@ -542,6 +608,7 @@ int http_add_header(struct http_data *hd, char *header)
 
             phrase ++;
             strcpy(hd->http.phrase, phrase);
+//printf("HTTP\ncode %s\nver %s\nphrase %s\n", code, ver, phrase);
         }else{
             hd->http.header[hd->http.header_count++] = strdup(header);
         }
@@ -550,83 +617,331 @@ int http_add_header(struct http_data *hd, char *header)
 }
 char *http_skip2break(char *ptr)
 {
-	while(*ptr != '\r') ptr ++;
-	return ptr;
+    while(*ptr != '\r') ptr ++;
+    return ptr;
 }
+
+int http_alloc_body_size(struct http_data *hd, int length){
+    char *tmp;
+    if(hd->http.body.start == NULL) {
+        hd->http.body.start = malloc(length + 1);
+        if(hd->http.body.start == NULL) return -1;
+        hd->http.body.size = length;
+    }else if(hd->http.body.size - hd->http.body.offset < length){
+        tmp = realloc(hd->http.body.start, hd->http.body.offset + length + 1);
+        if(tmp == NULL) return -1;
+        hd->http.body.start = tmp;
+        hd->http.body.size = hd->http.body.offset + length;
+    }
+    return 0;
+}
+
+int recv_http_header(struct http_data *hd) {
+    int begin = 0;
+    int ret;
+    int len;
+    char *buf = hd->http.buf;
+    char *newline;
+    for(;;) {
+        newline = strstr(buf, "\r\n");
+        if(newline == NULL){//First time read.
+            len = hd->recv(hd, hd->http.buf + hd->http.buf_offset, sizeof(hd->http.buf) - hd->http.buf_offset -1);
+            if(len > 0){
+//printf("======================================\n%s\n======================================\n", hd->http.buf);
+                hd->http.buf_offset += len;
+                hd->http.buf[hd->http.buf_offset] = '\0';
+                buf = hd->http.buf;
+            }else{
+                return -1;//recv failure
+            }
+        }else{
+            *newline = '\0';
+            newline += 2;
+            if(begin == 0){
+                //Read first Header EX:HTTP/1.1 200 OK
+                http_add_header(hd, buf);
+                begin = 1;
+            }else{
+                if(buf[0] == '\0'){
+                    //Reach body
+                    if(hd->http.buf + hd->http.buf_offset - newline > 0){
+                        memmove(hd->http.buf, newline, hd->http.buf + hd->http.buf_offset - newline +1);
+                        hd->http.buf_offset = hd->http.buf + hd->http.buf_offset - newline;
+                    }else{
+                        hd->http.buf[0] = '\0';
+                        hd->http.buf_offset = 0;
+                    }
+                    //printf("reach body length %d\n---\n%s\n---\n", hd->http.buf_offset, hd->http.buf);
+                    break;
+                }else{
+                    //Header
+                    http_add_header(hd, buf);
+                }
+            }
+            buf = newline;
+        }
+    }
+    return 0;
+}
+int http_recv_normal_body(struct http_data *hd) {
+    int len = 0;
+    int ret = 0;
+    for(;;){
+        if(hd->http.buf_offset > 0 ){
+            if(hd->http.body.start == NULL){
+                hd->http.body.start = malloc(hd->http.content_len);
+                if(hd->http.body.start) {
+                    memcpy(hd->http.body.start, hd->http.buf, hd->http.buf_offset);
+                    hd->http.body.size = hd->http.buf_offset;
+                }else{
+                    DBG("Out of memory\n");
+                    return -1;
+                }
+            }else{
+                //printf("copy data %s\n", hd->http.buf);
+                memcpy(hd->http.body.start + hd->http.body.size , hd->http.buf, hd->http.buf_offset);
+                hd->http.body.size += hd->http.buf_offset;
+                DBG("body length now %d\n", hd->http.body.size);
+            }
+        }
+        if(hd->http.content_len == hd->http.body.size){
+            DBG("All body downloaded\n");
+            break;
+        }
+        len = hd->recv(hd, hd->http.buf, sizeof(hd->http.buf) - 1 );
+        if(len > 0){
+            hd->http.buf_offset = len;
+        }else{
+            DBG("recv body error\n");
+            return -1;
+        }
+    }
+    return ret;
+}
+
+int http_recv_chunked_body(struct http_data *hd) {
+    int     len = 0;
+    int     ret = 0;
+    char    *newline;
+    char    *ptr;
+    char    *tmp;
+    char    buf[HTTP_RECV_BUF];
+    long    length;
+    int     rest_len;
+    for(;;){
+        if(hd->http.buf_offset > 0) {
+            //DBG("buffer offset %d  %s\n", hd->http.buf_offset, hd->http.buf);
+            memset(buf, 0, HTTP_RECV_BUF);
+            memcpy(buf, hd->http.buf, hd->http.buf_offset + 1);// Copy a buffer
+            ptr = buf;
+            //DBG("buf:%s\n",ptr);
+        }else{
+            DBG("Not expected case\n");
+            break;
+        }
+        newline = strstr(ptr, "\r\n");
+        if(newline == NULL) { // No chunk, copy to body
+            if(hd->http.body.start == NULL) {
+                hd->http.body.start = malloc(hd->http.buf_offset + 1);
+                if(hd->http.body.start){
+                    memcpy(hd->http.body.start, hd->http.buf, hd->http.buf_offset);
+                    hd->http.body.size = hd->http.buf_offset;
+                }else{
+                    DBG("Out of memory\n");
+                    return -1;
+                }
+            }else{
+                tmp = realloc(hd->http.body.start, hd->http.body.size + hd->http.buf_offset +1);
+                if(tmp){
+                    hd->http.body.start = tmp;
+                    memcpy(hd->http.body.start + hd->http.body.size, hd->http.buf, hd->http.buf_offset);
+                    hd->http.body.size += hd->http.buf_offset;
+                }else{
+                    DBG("Out of memory\n");
+                    return -1;
+                }
+            }
+        }else{//parse if body end
+            int body_end = 0;
+            while(newline != NULL){
+                *newline = '\0';
+                newline += 2;
+                length = strtol (ptr, NULL, 16);
+                if(length == 0){
+                    //reach body end
+                    rest_len = newline - buf;
+                    if(rest_len > 0) {
+                        body_end = 1;
+                    }else{
+                        DBG("error rest length < 0\n");
+                        rest_len = 0;
+                        body_end = 1;
+                    }
+                    break;
+                }else if(length < 0 || errno == ERANGE){
+                    DBG("Decode chunk error\n");
+                    return -1;
+                }else{//still chunk keep find \r\n
+                    ptr = newline;
+                    newline = strstr(ptr, "\r\n");
+                }
+            }
+            if(body_end == 1){
+                if(hd->http.body.start == NULL) {
+                    hd->http.body.start = malloc(hd->http.buf_offset + 1);
+                    memcpy(hd->http.body.start, hd->http.buf, hd->http.buf_offset);
+                    hd->http.body.size = rest_len;
+                    break;
+                }else{
+                    tmp = realloc(hd->http.body.start, hd->http.body.size + hd->http.buf_offset + 1);
+                    if(tmp){
+                        hd->http.body.start = tmp;
+                        memcpy(hd->http.body.start + hd->http.body.size, hd->http.buf, hd->http.buf_offset);// Copy rest data
+                        hd->http.body.size += rest_len;
+                    }else{
+                        DBG("Out of memory\n");
+                    }
+                    break;
+                }
+            }else{
+                if(hd->http.body.start == NULL) {
+                    hd->http.body.start = malloc( hd->http.buf_offset +1);
+                    memcpy(hd->http.body.start, hd->http.buf,  hd->http.buf_offset);
+                    hd->http.body.size += hd->http.buf_offset;
+                }else{
+                    tmp = realloc(hd->http.body.start, hd->http.body.size + hd->http.buf_offset +1);
+                    if(tmp){
+                        hd->http.body.start = tmp;
+                        memcpy(hd->http.body.start + hd->http.body.size, hd->http.buf, hd->http.buf_offset);// Copy all buffer
+                        hd->http.body.size += hd->http.buf_offset;
+                    }else{
+                        DBG("Out of memory\n");
+                    }
+                }
+            }
+        }
+        len = hd->recv(hd, hd->http.buf, sizeof(hd->http.buf) - 1);
+        if(len > 0) { // keep recv chunked body
+            hd->http.buf_offset = len;
+        }else{
+            hd->http.buf_offset = 0;
+            DBG("Not expected. We should recv body end before no packet recv\n");
+            break;
+        }
+    }
+    return ret;
+}
+int http_decode_chunk_body(struct http_data *hd){
+    int     ret = 0;
+    char    *ptr = NULL;
+    char    *tmp = NULL;
+    int     read = 0;
+    char    *newline = NULL;
+    long    length;
+    if(hd->http.body.size > 0){
+        tmp = malloc(hd->http.body.size + 1);
+        if(tmp) {
+            memset(tmp, 0, hd->http.body.size +1);
+            ptr = hd->http.body.start;
+            for(;;){
+                newline = strstr(ptr, "\r\n");
+                if(newline == NULL) {
+                    free(tmp);
+                    return -1;
+                }
+                *newline = '\0';
+                newline += 2;
+                //DBG("**********%s*******\n", ptr);
+                length = strtol (ptr, NULL, 16);
+                if(length == 0){
+                    //Body end
+                    free(hd->http.body.start);
+                    hd->http.body.start = tmp;
+                    hd->http.content_len = read;
+                    break;
+                }else if(length < 0  || errno == ERANGE) {
+                    free(tmp);
+                    return -1;
+                }else{
+                    memcpy(tmp + read, newline, length);
+                    read += length;
+                }
+                ptr = newline;
+            }
+        }else{
+            return -1;
+        }
+    }
+    return ret;
+}
+
 int http_recv_resp(struct http_data *hd) {
-	char	content_len[HTTP_HEADER_LEN];
+    char    content_len[HTTP_HEADER_LEN];
+    char    encode_type[HTTP_HEADER_LEN];
     char    buf[HTTP_RECV_BUF];
     //char    *head  = buf;
+    long    length;
+    int     ret;
     char    *start = buf;
     int     len;
     char    *header;
     char    *next_line;
     int     header_parsed = 0;
     int     read_count = 0;
-    for(;;)
+    memset(content_len, 0, HTTP_HEADER_LEN);
+    memset(encode_type, 0, HTTP_HEADER_LEN);
+    memset(hd->http.buf, 0, sizeof(hd->http.buf));
+    hd->http.buf_offset = 0;
+    hd->http.content_len = 0;
+    hd->http.body.size = 0;
+    hd->http.body.offset = 0;
+    if(hd->http.body.start) {
+        free(hd->http.body.start);
+        hd->http.body.start = NULL;
+    }
+    if(1)
     {
         memset(buf, 0, HTTP_RECV_BUF);
-        len = hd->recv(hd, buf, HTTP_RECV_BUF);
-        if(len > 0){
-#ifdef DEBUG_HTTP
-			printf("<<<<<<<<<<<<<<<<<<\n%s\n<<<<<<<<<<<<<<<<<<<<\n",buf);
-#endif
-            if(header_parsed == 0) {
-                while( (next_line = strstr(start, "\r\n")) != NULL )  {
-                    header_parsed = 1;
-                    *next_line = '\0';
-                    next_line += 2;
-                    header = start;
-                    if(*header == '\0'){
-                        break;
-                    }else{
-                        http_add_header(hd, header);
-                    }
-                    start = next_line;
-                }
-                if(header_parsed  == 1){
-					http_find_header(hd, "Transfer-Encoding", content_len);
-					if(strncmp(content_len, "chunked", strlen("chunked")) == 0) {
-						hd->http.chunked = 1;
-					}
-                    start = next_line;
-					long chunk = strtol(start, NULL, 16);
-					start = http_skip2break(start);
-					start = http_skip_break(start);
-                    hd->http.body.size = chunk;
-                    hd->http.body.start = malloc(hd->http.body.size);
-                    if(hd->http.body.start){
-                        memcpy(hd->http.body.start, start , hd->http.body.size);
-						hd->http.body.start[hd->http.body.size] = '\0';
-                    }
+        if ((ret = recv_http_header(hd) ) < 0 ){
+            return -1;
+        }
+        http_find_header(hd, "Content-Length", content_len);
+        http_find_header(hd, "Transfer-Encoding", encode_type);
+        if(strlen(content_len) > 0){
+            length = strtol(content_len, NULL, 10);
+            hd->http.content_len = length;
+            //printf("HTTP Content-Length:%d\n", length);
+            if(http_recv_normal_body(hd) == 0){
+                return 0;
+            }else{
+                DBG("http receive body error\n");
+                return -1;
+            }
+        }else if(strncmp(encode_type, "chunked", 7) == 0){
+            hd->http.chunked = 1;
+            if(http_recv_chunked_body(hd) == 0){
+                if(http_decode_chunk_body(hd) ==0 ){
+                    return 0;
+                }else{
+                    DBG("http decode chunk body error\n");
+                    return -1;
                 }
             }else{
-				if(hd->http.body.start == NULL) {
-					char *ptr = malloc(len + 1);
-					hd->http.body.start = ptr;
-					memcpy(hd->http.body.start, buf, len);
-					hd->http.body.size += len;
-					hd->http.body.start[hd->http.body.size] = '\0';
-				}else{
-					char *ptr = realloc(hd->http.body.start, hd->http.body.size + len);
-					hd->http.body.start = ptr;
-					memcpy(ptr + hd->http.body.size , buf, len);
-					hd->http.body.size += len;
-					hd->http.body.start[hd->http.body.size] = '\0';
-				}
+                DBG("http receive chunk body error\n");
+                return -1;
             }
-			if(len < HTTP_RECV_BUF) break;
-        }else{
-			break;
-		}
+            //TODO parse chunk data
+            DBG("Parse chunked data here\n");
+        }
         read_count ++;
     }
+    printf("Read End\nBody Length:%d\nBody Data:\n%s\n", hd->http.content_len, hd->http.body.start);
     return 0;
 }
 
 int http_perform(struct http_data *hd) {
     struct hostent *server = NULL;
-    int ret = 0;
+    int ret = -1;
     char loc[HTTP_HOST_LEN];
     if(http_host_parse(hd) != 0) {
         LOG("Error: URL parsing error!\nHOST:%s\nPORT:%d\nPATH:%s\n",
@@ -666,7 +981,7 @@ int http_perform(struct http_data *hd) {
         }
 #endif //HAVE_OPENSSL
     }
-	struct http_data *hd2 = NULL;
+    struct http_data *hd2 = NULL;
     for(;;) {
         ret = http_send_req(hd);
         if(ret == 0) {
@@ -682,22 +997,28 @@ int http_perform(struct http_data *hd) {
 
                         http_set_uri(hd2, loc);
                         http_perform(hd2);
-						//if(hd->http.body.start != NULL) free(hd->http.body.start);
+                        if(hd->http.body.start != NULL) free(hd->http.body.start);
 
-						hd->http.body.start = malloc(hd2->http.body.size);
-						memcpy(hd->http.body.start, hd2->http.body.start, hd2->http.body.size);
+                        hd->http.body.start = malloc(hd2->http.content_len);
+                        memcpy(hd->http.body.start, hd2->http.body.start, hd2->http.content_len);
                         http_destroy_hd(hd2);
+                        ret = 0;
                         break;
                     case 200:
-						break;
+                        printf("200 OK\n%s\n", hd->http.body.start);
+                        ret = 0;
+                        break;
                     case 401:
-						LOG("GOT 401 Unauthorized\n");
-						http_parse_auth(hd);
-						ret = http_send_auth_req(hd);
-						if(ret == 0) {
-							ret = http_recv_resp(hd);
-						}
-						break;
+                        LOG("GOT 401 Unauthorized\n");
+                        http_parse_auth(hd);
+                        ret = http_send_auth_req(hd);
+                        if(ret == 0) {
+                            ret = http_recv_resp(hd);
+                            if(ret == 0){
+                                return 0;
+                            }
+                        }
+                        break;
                     case 404:
                         break;
                     default:
@@ -709,6 +1030,6 @@ int http_perform(struct http_data *hd) {
             LOG("Error: send http request error\n");
         }
     }
-    return 0;
+    return  ret;
 }
 

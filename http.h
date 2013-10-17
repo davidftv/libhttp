@@ -27,7 +27,7 @@
 #define HTTP_HOST_LEN	512
 
 #define HTTP_URI_LEN	1024
-#define HTTP_RECV_BUF	1400
+#define HTTP_RECV_BUF	1000
 
 #define HTTP_HEADER_LEN	512
 
@@ -86,11 +86,15 @@ struct hdb {
 	char				auth[8];
 	char				realm[16];
 	char				nonce[HTTP_NONCE_LEN];
-	char				chunked;
+	int					chunked;
+	int					content_len;	//Total length
 	struct {
-		int				size;
-		char			*start;
+		int				offset;			//Data read
+		int				size; 			//Buffer size
+		char			*start;			//Body start
 	} body;
+	char				buf[HTTP_RECV_BUF];		//Buffer
+	int					buf_offset;		//Buffer read
 };
 struct http_data {
 	int 				sk;
@@ -104,6 +108,8 @@ struct http_data {
 	char				passwd[SSL_KEY_PW_LEN];
 	char				username[HTTP_USER_LEN];
 	char				password[HTTP_PASS_LEN];
+    void                *body_send;
+    int                 body_send_len;
 	int (*send)(struct http_data *, void *, int);
 	int (*recv)(struct http_data *, void *, int);
 #ifdef HAVE_OPENSSL
@@ -114,10 +120,14 @@ struct http_data {
 	struct hdb			http;
 };
 
+#define DBG(fmt, args...)  printf("[%s:%d]" fmt, __FILE__,__LINE__,##args)
+
+
 struct http_data *http_create();
 int http_set_uri(struct http_data *hd, char *uri);
 int http_perform(struct http_data *hd);
 int http_set_method(struct http_data *hd, int type);
 void http_destroy_hd(struct http_data *hd);
 int http_set_user_pass(struct http_data *hd, char *user, char *pass);
+int http_set_body(struct http_data *hd, void *data, int len);
 #endif
