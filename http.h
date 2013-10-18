@@ -120,7 +120,7 @@ struct http_data {
 	struct hdb			http;
 };
 
-#define DBG(fmt, args...)  printf("[%s:%d]" fmt, __FILE__,__LINE__,##args)
+#define DBGHTTP(fmt, args...)  printf("[%s:%d]" fmt, __FILE__,__LINE__,##args)
 
 
 struct http_data *http_create();

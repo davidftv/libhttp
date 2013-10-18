@@ -12,6 +12,48 @@
 #include "http.h"
 #include <openssl/md5.h>
 
+char from_hex(char ch) {
+    return isdigit(ch) ? ch - '0' : tolower(ch) - 'A' + 10;
+}
+
+char to_hex(char code) {
+    static char hex[] = "0123456789ABCDEF";
+    return hex[code & 15];
+}
+
+char *http_url_encode(char *str) {
+    char *pstr = str, *buf = malloc(strlen(str) * 3 + 1), *pbuf = buf;
+    while (*pstr) {
+    if (isalnum(*pstr) || *pstr == '-' || *pstr == '_' || *pstr == '.' || *pstr == '~')
+        *pbuf++ = *pstr;
+    else if (*pstr == ' ')
+        *pbuf++ = '+';
+    else
+        *pbuf++ = '%', *pbuf++ = to_hex(*pstr >> 4), *pbuf++ = to_hex(*pstr & 15);
+    pstr++;
+    }
+    *pbuf = '\0';
+    return buf;
+}
+
+char *http_url_decode(char *str) {
+    char *pstr = str, *buf = malloc(strlen(str) + 1), *pbuf = buf;
+    while (*pstr) {
+        if (*pstr == '%') {
+            if (pstr[1] && pstr[2]) {
+                *pbuf++ = from_hex(pstr[1]) << 4 | from_hex(pstr[2]);
+                pstr += 2;
+            }
+        } else if (*pstr == '+') {
+            *pbuf++ = ' ';
+        } else {
+            *pbuf++ = *pstr;
+        }
+        pstr++;
+    }
+    *pbuf = '\0';
+    return buf;
+}
 
 struct http_data *http_create() {
     int i = 0;
@@ -91,7 +133,7 @@ int http_send(struct http_data *hd, void *buf, int len) {
                 sent += ret;
             }else{
                 //FIXME add error handle break do while
-                LOG("Error: send data failure %s\n", strerror(errno));
+                DBGHTTP("Error: send data failure %s\n", strerror(errno));
             }
         }while(len > 0 && sent < len);
     }
@@ -111,10 +153,10 @@ int http_recv(struct http_data *hd, void *buf, int len) {
         if(ret > 0){
             ret = recv(hd->sk, buf, len, 0);
             if(ret <= 0) {
-                LOG("Error: receive data failure %s\n", strerror(errno));
+                DBGHTTP("Error: receive data failure %s\n", strerror(errno));
             }
         }else{
-            LOG("Error: select socket failure %s\n", strerror(errno));
+            DBGHTTP("Error: select socket failure %s\n", strerror(errno));
         }
     }
     return ret;
@@ -130,7 +172,7 @@ int https_send(struct http_data *hd, void *buf, int len) {
                 sent += ret;
             }else{
                 //FIXME add error handle break do while
-                LOG("Error: send data failure %s\n", strerror(errno));
+                DBGHTTP("Error: send data failure %s\n", strerror(errno));
             }
         }while(len > 0 && sent < len);
     }
@@ -145,7 +187,7 @@ int https_recv(struct http_data *hd, void *buf, int len) {
     if(SSL_pending(hd->ssl) > 0) {
         ret = SSL_read(hd->ssl, buf, len);
         if(ret <= 0) {
-            LOG("Error: receive ssl data failure %s\n", strerror(errno));
+            DBGHTTP("Error: receive ssl data failure %s\n", strerror(errno));
         }
     }else{
         fd_set fset;
@@ -155,10 +197,10 @@ int https_recv(struct http_data *hd, void *buf, int len) {
         if(ret > 0){
             ret = SSL_read(hd->ssl, buf, len);
             if(ret <= 0) {
-                LOG("Error: receive data failure %s\n", strerror(errno));
+                DBGHTTP("Error: receive data failure %s\n", strerror(errno));
             }
         }else{
-            LOG("Error: select socket failure %s\n", strerror(errno));
+            DBGHTTP("Error: select socket failure %s\n", strerror(errno));
         }
     }
     return ret;
@@ -188,7 +230,7 @@ int http_host_parse(struct http_data *hd) {
             hd->send = http_send;
             hd->recv = http_recv;
         }else{
-            LOG("protocol not support!\n");
+            DBGHTTP("protocol not support!\n");
             hd->uri.proto = PROTO_HTTP; // Default protocol http
         }
         if((ppath = strchr(host, '/')) != NULL) {
@@ -217,7 +259,7 @@ no_port:
             }
         }
         if(hd->uri.port > 65535) {
-            LOG("Error: http port out of range!\n");
+            DBGHTTP("Error: http port out of range!\n");
             if(hd->uri.proto == PROTO_HTTPS)
                 hd->uri.port = DEFAULT_HTTPS_PORT;
             else
@@ -241,12 +283,12 @@ static int ca_verify_cb(int ok, X509_STORE_CTX *store)
         cert = X509_STORE_CTX_get_current_cert(store);
         depth = X509_STORE_CTX_get_error_depth(store);
         err = X509_STORE_CTX_get_error(store);
-        LOG("Error with certificate at depth: %i", depth);
+        DBGHTTP("Error with certificate at depth: %i", depth);
         X509_NAME_oneline(X509_get_issuer_name(cert), data, SSL_DATA_LEN);
-        LOG(" issuer = %s", data);
+        DBGHTTP(" issuer = %s", data);
         X509_NAME_oneline(X509_get_subject_name(cert), data, SSL_DATA_LEN);
-        LOG(" subject = %s", data);
-        LOG(" err %i:%s", err, X509_verify_cert_error_string(err));
+        DBGHTTP(" subject = %s", data);
+        DBGHTTP(" err %i:%s", err, X509_verify_cert_error_string(err));
         return 0;
     }
     return ok;
@@ -255,13 +297,13 @@ static int ca_verify_cb(int ok, X509_STORE_CTX *store)
 int http_ssl_setup(struct http_data *hd) {
         SSL_load_error_strings();
         if(SSL_library_init() != 1) {
-            LOG("Error: SSL lib init failure\n");
+            DBGHTTP("Error: SSL lib init failure\n");
             return -1;
         }
         if((hd->ctx = SSL_CTX_new(SSLv3_method())) == NULL) {
-            LOG("Create SSLv3 failure\n");
+            DBGHTTP("Create SSLv3 failure\n");
             if((hd->ctx = SSL_CTX_new(TLSv1_method())) == NULL) {
-                LOG("Create TLSv1 failure\n");
+                DBGHTTP("Create TLSv1 failure\n");
                 return -1;
             }
         }
@@ -276,25 +318,25 @@ int http_ssl_setup(struct http_data *hd) {
         }
         SSL_CTX_set_default_passwd_cb_userdata(hd->ctx, hd->passwd);
         if(SSL_CTX_use_certificate_chain_file(hd->ctx, hd->cert_path) == 1){
-            LOG("Load certificate success\n");
+            DBGHTTP("Load certificate success\n");
         }
         if(SSL_CTX_use_PrivateKey_file(hd->ctx, hd->key_path, SSL_FILETYPE_PEM) == 1) {
-            LOG("Load private key success\n");
+            DBGHTTP("Load private key success\n");
         }
         if(SSL_CTX_check_private_key(hd->ctx) == 1) {
-            LOG("Check private key success\n");
+            DBGHTTP("Check private key success\n");
         }
         if((hd->ssl = SSL_new(hd->ctx)) == NULL) {
-            LOG("Error: create SSL failure\n");
+            DBGHTTP("Error: create SSL failure\n");
             return -1;
         }
         if(SSL_set_fd(hd->ssl, hd->sk) != 1) {
-            LOG("Error: set SSL fd failure\n");
+            DBGHTTP("Error: set SSL fd failure\n");
         }
         if(SSL_connect(hd->ssl) != 1) {
             return -1;
         }
-        LOG("Connected to SSL success\n");
+        DBGHTTP("Connected to SSL success\n");
     return 0;
 }
 #endif
@@ -417,7 +459,7 @@ int http_set_body(struct http_data *hd, void *data, int len) {
                 hd->body_send = tmp;
                 hd->body_send_len = len;
             }else{
-                DBG("Out of memory\n");
+                DBGHTTP("Out of memory\n");
                 return -1;
             }
         }
@@ -440,8 +482,9 @@ int http_send_req(struct http_data *hd) {
                 "Host: %s:%d\r\n"
                 "Accept: */*\r\n"
                 "User-Agent: Kaija/Agent\r\n"
+                "Content-Length: %d\r\n"
                 "Content-Type: application/x-www-form-urlencoded\r\n"
-                "\r\n", hd->uri.path, hd->uri.host, hd->uri.port);
+                "\r\n", hd->uri.path, hd->uri.host, hd->uri.port, hd->body_send_len);
     }
     if(hd->body_send_len > 0){
         int send_byte = hd->body_send_len + len + 1; // header \r\n body \r\n preserve 4 bytes
@@ -450,18 +493,18 @@ int http_send_req(struct http_data *hd) {
             memcpy(http_data, header, len);
             memcpy(http_data + len , hd->body_send, hd->body_send_len);
             send_byte--;
-            DBG("Data %d bytes send\n", send_byte );
+            DBGHTTP("Data %d bytes send\n", send_byte );
         }else{
-            DBG("Out of memory\n");
+            DBGHTTP("Out of memory\n");
             return -1;
         }
 #ifdef DEBUG_HTTP
-        LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", http_data);
+        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", http_data);
 #endif
         hd->send(hd, http_data, send_byte);
     }else{
 #ifdef DEBUG_HTTP
-        LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
+        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
 #endif
         hd->send(hd, header, len);
     }
@@ -485,7 +528,7 @@ int http_md5sum(char *input, int len, char *out)
         sprintf(buf, "%02x", md5[i]);
         strcat(out, buf);
     }
-    //LOG("MD5:[%s]\n", out);DER_LEN
+    //DBGHTTP("MD5:[%s]\n", out);DER_LEN
     return ret;
 }
 
@@ -552,6 +595,7 @@ int http_send_auth_req(struct http_data *hd) {
             "response=\"%s\"\r\n"
             "User-Agent: Kaija/Agent\r\n"
             "Content-Type: application/x-www-form-urlencoded\r\n"
+            "Content-Length: %d\r\n"
             "Host: %s:%d\r\n"
             "Accept: */*\r\n\r\n",
             hd->uri.path,
@@ -559,6 +603,7 @@ int http_send_auth_req(struct http_data *hd) {
             hd->http.nonce, hd->uri.path,
             cnonce,
             response,
+            hd->body_send_len,
             hd->uri.host,hd->uri.port);
     }
     if(hd->body_send_len > 0){
@@ -568,18 +613,18 @@ int http_send_auth_req(struct http_data *hd) {
             memcpy(http_data, header, len);
             memcpy(http_data + len , hd->body_send, hd->body_send_len);
             send_byte --;
-            DBG("Data %d bytes send\n", send_byte);
+            DBGHTTP("Data %d bytes send\n", send_byte);
         }else{
-            DBG("Out of memory\n");
+            DBGHTTP("Out of memory\n");
             return -1;
         }
 #ifdef DEBUG_HTTP
-        LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", http_data);
+        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", http_data);
 #endif
         hd->send(hd, http_data, send_byte);
     }else{
 #ifdef DEBUG_HTTP
-        LOG(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
+        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
 #endif
         hd->send(hd, header, len);
     }
@@ -638,7 +683,7 @@ int http_alloc_body_size(struct http_data *hd, int length){
 
 int recv_http_header(struct http_data *hd) {
     int begin = 0;
-    int ret;
+    //int ret;
     int len;
     char *buf = hd->http.buf;
     char *newline;
@@ -647,11 +692,11 @@ int recv_http_header(struct http_data *hd) {
         if(newline == NULL){//First time read.
             len = hd->recv(hd, hd->http.buf + hd->http.buf_offset, sizeof(hd->http.buf) - hd->http.buf_offset -1);
             if(len > 0){
-//printf("======================================\n%s\n======================================\n", hd->http.buf);
                 hd->http.buf_offset += len;
                 hd->http.buf[hd->http.buf_offset] = '\0';
                 buf = hd->http.buf;
             }else{
+                DBGHTTP("receive http header failure\n");
                 return -1;//recv failure
             }
         }else{
@@ -694,25 +739,25 @@ int http_recv_normal_body(struct http_data *hd) {
                     memcpy(hd->http.body.start, hd->http.buf, hd->http.buf_offset);
                     hd->http.body.size = hd->http.buf_offset;
                 }else{
-                    DBG("Out of memory\n");
+                    DBGHTTP("Out of memory\n");
                     return -1;
                 }
             }else{
                 //printf("copy data %s\n", hd->http.buf);
                 memcpy(hd->http.body.start + hd->http.body.size , hd->http.buf, hd->http.buf_offset);
                 hd->http.body.size += hd->http.buf_offset;
-                DBG("body length now %d\n", hd->http.body.size);
+                DBGHTTP("body length now %d\n", hd->http.body.size);
             }
         }
         if(hd->http.content_len == hd->http.body.size){
-            DBG("All body downloaded\n");
+            DBGHTTP("All body downloaded\n");
             break;
         }
         len = hd->recv(hd, hd->http.buf, sizeof(hd->http.buf) - 1 );
         if(len > 0){
             hd->http.buf_offset = len;
         }else{
-            DBG("recv body error\n");
+            DBGHTTP("recv body error\n");
             return -1;
         }
     }
@@ -730,13 +775,13 @@ int http_recv_chunked_body(struct http_data *hd) {
     int     rest_len;
     for(;;){
         if(hd->http.buf_offset > 0) {
-            //DBG("buffer offset %d  %s\n", hd->http.buf_offset, hd->http.buf);
+            //DBGHTTP("buffer offset %d  %s\n", hd->http.buf_offset, hd->http.buf);
             memset(buf, 0, HTTP_RECV_BUF);
             memcpy(buf, hd->http.buf, hd->http.buf_offset + 1);// Copy a buffer
             ptr = buf;
-            //DBG("buf:%s\n",ptr);
+            //DBGHTTP("buf:%s\n",ptr);
         }else{
-            DBG("Not expected case\n");
+            DBGHTTP("Not expected case\n");
             break;
         }
         newline = strstr(ptr, "\r\n");
@@ -747,7 +792,7 @@ int http_recv_chunked_body(struct http_data *hd) {
                     memcpy(hd->http.body.start, hd->http.buf, hd->http.buf_offset);
                     hd->http.body.size = hd->http.buf_offset;
                 }else{
-                    DBG("Out of memory\n");
+                    DBGHTTP("Out of memory\n");
                     return -1;
                 }
             }else{
@@ -757,7 +802,7 @@ int http_recv_chunked_body(struct http_data *hd) {
                     memcpy(hd->http.body.start + hd->http.body.size, hd->http.buf, hd->http.buf_offset);
                     hd->http.body.size += hd->http.buf_offset;
                 }else{
-                    DBG("Out of memory\n");
+                    DBGHTTP("Out of memory\n");
                     return -1;
                 }
             }
@@ -773,13 +818,13 @@ int http_recv_chunked_body(struct http_data *hd) {
                     if(rest_len > 0) {
                         body_end = 1;
                     }else{
-                        DBG("error rest length < 0\n");
+                        DBGHTTP("error rest length < 0\n");
                         rest_len = 0;
                         body_end = 1;
                     }
                     break;
                 }else if(length < 0 || errno == ERANGE){
-                    DBG("Decode chunk error\n");
+                    DBGHTTP("Decode chunk error\n");
                     return -1;
                 }else{//still chunk keep find \r\n
                     ptr = newline;
@@ -799,7 +844,7 @@ int http_recv_chunked_body(struct http_data *hd) {
                         memcpy(hd->http.body.start + hd->http.body.size, hd->http.buf, hd->http.buf_offset);// Copy rest data
                         hd->http.body.size += rest_len;
                     }else{
-                        DBG("Out of memory\n");
+                        DBGHTTP("Out of memory\n");
                     }
                     break;
                 }
@@ -815,7 +860,7 @@ int http_recv_chunked_body(struct http_data *hd) {
                         memcpy(hd->http.body.start + hd->http.body.size, hd->http.buf, hd->http.buf_offset);// Copy all buffer
                         hd->http.body.size += hd->http.buf_offset;
                     }else{
-                        DBG("Out of memory\n");
+                        DBGHTTP("Out of memory\n");
                     }
                 }
             }
@@ -825,7 +870,7 @@ int http_recv_chunked_body(struct http_data *hd) {
             hd->http.buf_offset = len;
         }else{
             hd->http.buf_offset = 0;
-            DBG("Not expected. We should recv body end before no packet recv\n");
+            DBGHTTP("Not expected. We should recv body end before no packet recv\n");
             break;
         }
     }
@@ -851,7 +896,7 @@ int http_decode_chunk_body(struct http_data *hd){
                 }
                 *newline = '\0';
                 newline += 2;
-                //DBG("**********%s*******\n", ptr);
+                //DBGHTTP("**********%s*******\n", ptr);
                 length = strtol (ptr, NULL, 16);
                 if(length == 0){
                     //Body end
@@ -882,11 +927,11 @@ int http_recv_resp(struct http_data *hd) {
     //char    *head  = buf;
     long    length;
     int     ret;
-    char    *start = buf;
-    int     len;
-    char    *header;
-    char    *next_line;
-    int     header_parsed = 0;
+    //char    *start = buf;
+    //int     len;
+    //char    *header;
+    //char    *next_line;
+    //int     header_parsed = 0;
     int     read_count = 0;
     memset(content_len, 0, HTTP_HEADER_LEN);
     memset(encode_type, 0, HTTP_HEADER_LEN);
@@ -903,6 +948,7 @@ int http_recv_resp(struct http_data *hd) {
     {
         memset(buf, 0, HTTP_RECV_BUF);
         if ((ret = recv_http_header(hd) ) < 0 ){
+            DBGHTTP("Header receive failure\n");
             return -1;
         }
         http_find_header(hd, "Content-Length", content_len);
@@ -914,7 +960,7 @@ int http_recv_resp(struct http_data *hd) {
             if(http_recv_normal_body(hd) == 0){
                 return 0;
             }else{
-                DBG("http receive body error\n");
+                DBGHTTP("http receive body error\n");
                 return -1;
             }
         }else if(strncmp(encode_type, "chunked", 7) == 0){
@@ -923,15 +969,15 @@ int http_recv_resp(struct http_data *hd) {
                 if(http_decode_chunk_body(hd) ==0 ){
                     return 0;
                 }else{
-                    DBG("http decode chunk body error\n");
+                    DBGHTTP("http decode chunk body error\n");
                     return -1;
                 }
             }else{
-                DBG("http receive chunk body error\n");
+                DBGHTTP("http receive chunk body error\n");
                 return -1;
             }
             //TODO parse chunk data
-            DBG("Parse chunked data here\n");
+            DBGHTTP("Parse chunked data here\n");
         }
         read_count ++;
     }
@@ -944,17 +990,17 @@ int http_perform(struct http_data *hd) {
     int ret = -1;
     char loc[HTTP_HOST_LEN];
     if(http_host_parse(hd) != 0) {
-        LOG("Error: URL parsing error!\nHOST:%s\nPORT:%d\nPATH:%s\n",
+        DBGHTTP("Error: URL parsing error!\nHOST:%s\nPORT:%d\nPATH:%s\n",
             hd->uri.host, hd->uri.port, hd->uri.path);
 #ifdef DEBUG
     }else{
-        LOG("Connect to\nHOST:%s\nPORT:%d\nPATH:%s\n",
+        DBGHTTP("Connect to\nHOST:%s\nPORT:%d\nPATH:%s\n",
             hd->uri.host, hd->uri.port, hd->uri.path);
 #endif
     }
     server = gethostbyname(hd->uri.host);
     if(server == NULL) {
-        LOG("Error: Gethostbyname failure\n");
+        DBGHTTP("Error: Gethostbyname failure\n");
         return -1;
     }
     memcpy(&(hd->srv_addr.sin_addr), server->h_addr, sizeof(hd->srv_addr.sin_addr));
@@ -962,13 +1008,13 @@ int http_perform(struct http_data *hd) {
     hd->srv_addr.sin_port = htons(hd->uri.port);
     hd->sk = socket(AF_INET, SOCK_STREAM, 0);
     if(hd->sk < 0) {
-        LOG("Error: create socket failure %d\n", hd->sk);
+        DBGHTTP("Error: create socket failure %d\n", hd->sk);
         return -1;
     }
     //http_nonblock_socket(hd->sk);
     if(connect(hd->sk, (struct sockaddr *)&(hd->srv_addr), sizeof(struct sockaddr)) == -1 &&
          errno != EINPROGRESS) {
-        LOG("Error: Cannot connect to server\n");
+        DBGHTTP("Error: Cannot connect to server\n");
         destroy_http(hd);
         return -1;
     }
@@ -990,7 +1036,7 @@ int http_perform(struct http_data *hd) {
                 int code = atoi(hd->http.code);
                 switch(code){
                     case 302:
-                        LOG("GOT 302 redirect\n");
+                        DBGHTTP("GOT 302 redirect\n");
                         memset(loc, 0, HTTP_HOST_LEN);
                         http_find_header(hd, "Location:", loc);
                         hd2 = http_create();
@@ -1009,7 +1055,7 @@ int http_perform(struct http_data *hd) {
                         ret = 0;
                         break;
                     case 401:
-                        LOG("GOT 401 Unauthorized\n");
+                        DBGHTTP("GOT 401 Unauthorized\n");
                         http_parse_auth(hd);
                         ret = http_send_auth_req(hd);
                         if(ret == 0) {
@@ -1025,11 +1071,12 @@ int http_perform(struct http_data *hd) {
                         break;
                 }
                 break;
+            }else{
+                break;
             }
         }else{
-            LOG("Error: send http request error\n");
+            DBGHTTP("Error: send http request error\n");
         }
     }
     return  ret;
 }
-
