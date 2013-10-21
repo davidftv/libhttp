@@ -130,4 +130,7 @@ int http_set_method(struct http_data *hd, int type);
 void http_destroy_hd(struct http_data *hd);
 int http_set_user_pass(struct http_data *hd, char *user, char *pass);
 int http_set_body(struct http_data *hd, void *data, int len);
+
+char *http_url_encode(char *str);
+char *http_url_decode(char *str);
 #endif
