@@ -734,8 +734,9 @@ int http_recv_normal_body(struct http_data *hd) {
     for(;;){
         if(hd->http.buf_offset > 0 ){
             if(hd->http.body.start == NULL){
-                hd->http.body.start = malloc(hd->http.content_len);
+                hd->http.body.start = malloc(hd->http.content_len + 1);
                 if(hd->http.body.start) {
+                    memset(hd->http.body.start, 0, hd->http.content_len + 1);
                     memcpy(hd->http.body.start, hd->http.buf, hd->http.buf_offset);
                     hd->http.body.size = hd->http.buf_offset;
                 }else{
@@ -967,6 +968,7 @@ int http_recv_resp(struct http_data *hd) {
             hd->http.chunked = 1;
             if(http_recv_chunked_body(hd) == 0){
                 if(http_decode_chunk_body(hd) ==0 ){
+                    hd->http.body.start[hd->http.content_len] = '\0';
                     return 0;
                 }else{
                     DBGHTTP("http decode chunk body error\n");

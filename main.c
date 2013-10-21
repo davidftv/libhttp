@@ -36,15 +36,14 @@ int test_digest_login()
 	struct http_data *hd = http_create();
 	http_set_uri(hd, "http://www-dev.securepilot.com:8080/v1/user/login");
 	http_set_method(hd, HTTP_GET);
-	http_set_user_pass(hd, "+8979000126", "gemtek");
+	http_set_user_pass(hd, "+8979000114", "gemtek");
 	if(http_perform(hd) == 0){
 		printf("\n===============================================\n");
-		printf("%s\n",hd->http.body.start);
+		printf("|%s|\n",hd->http.body.start);
 		printf("===============================================\n");
 	}
     memset(session, 0, 256);
-    json_body_get_field(hd, "toekn", session);
-    printf("|%s|\n", session);
+    json_body_get_field(hd, "token", session);
 	http_destroy_hd(hd);
     return 0;
 }
@@ -54,12 +53,17 @@ int test_http_post_with_data(){
 	http_set_uri(hd, "http://www-dev.securepilot.com:8080/msg/v1/get");
 	http_set_method(hd, HTTP_POST);
     char buf[1024];
-    int len = sprintf(buf, "token=%%2B8979000126%%3A24b2a6f443168b5a8bba85b38f9a1f361be8e4b4&clear=false");
-    printf("%s\n%d\n",buf, len);
+    char *tok = http_url_encode(session);
+    int len ;
+    if(tok){
+        len = sprintf(buf, "token=%s&clear=true", tok);
+        printf("%s\n%d\n",buf, len);
+        free(tok);
+    }
     http_set_body(hd, buf, len);
 	if(http_perform(hd) == 0){
 		printf("\n===============================================\n");
-		printf("%s\n",hd->http.body.start);
+		printf("|%s|\n",hd->http.body.start);
 		printf("===============================================\n");
 	}
 	http_destroy_hd(hd);
