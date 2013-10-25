@@ -386,6 +386,12 @@ void http_clean_hd(struct http_data *hd)
     hd->body_send_len = 0;
 }
 void http_destroy_hd(struct http_data *hd) {
+    if(hd->uri.proto == PROTO_HTTPS){
+        destroy_ssl(hd);
+        destroy_http(hd);
+    }else{
+        destroy_http(hd);
+    }
     http_clean_hd(hd);
     free(hd);
 }
@@ -476,7 +482,7 @@ int http_send_req(struct http_data *hd) {
                 "Host: %s\r\n"
                 "Accept: */*\r\n"
                 "User-Agent: Kaija/Agent\r\n"
-                "\r\n\r\n", hd->uri.path, hd->uri.host);
+                "\r\n", hd->uri.path, hd->uri.host);
     }else if(hd->http.req_type == HTTP_POST) {
         len = snprintf(header, HTTP_HEADER_LEN, "POST %s HTTP/1.1\r\n"
                 "Host: %s:%d\r\n"
@@ -499,12 +505,12 @@ int http_send_req(struct http_data *hd) {
             return -1;
         }
 #ifdef DEBUG_HTTP
-        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", http_data);
+        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s>>>>>>>>>>>>>>>>>>\n", http_data);
 #endif
         hd->send(hd, http_data, send_byte);
     }else{
 #ifdef DEBUG_HTTP
-        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
+        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s>>>>>>>>>>>>>>>>>>\n", header);
 #endif
         hd->send(hd, header, len);
     }
@@ -567,7 +573,7 @@ int http_send_auth_req(struct http_data *hd) {
             "response=\"%s\"\r\n"
             "User-Agent: Kaija/Agent\r\n"
             "Host: %s:%d\r\n"
-            "Accept: */*\r\n\r\n\r\n",
+            "Accept: */*\r\n\r\n",
             hd->uri.path,
             hd->http.auth, hd->username, hd->http.realm,
             hd->http.nonce, hd->uri.path,
@@ -619,12 +625,12 @@ int http_send_auth_req(struct http_data *hd) {
             return -1;
         }
 #ifdef DEBUG_HTTP
-        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", http_data);
+        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s>>>>>>>>>>>>>>>>>>\n", http_data);
 #endif
         hd->send(hd, http_data, send_byte);
     }else{
 #ifdef DEBUG_HTTP
-        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s\n>>>>>>>>>>>>>>>>>>\n", header);
+        DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s>>>>>>>>>>>>>>>>>>\n", header);
 #endif
         hd->send(hd, header, len);
     }
@@ -1061,6 +1067,7 @@ int http_perform(struct http_data *hd) {
                         http_parse_auth(hd);
                         ret = http_send_auth_req(hd);
                         if(ret == 0) {
+                            usleep(100000);
                             ret = http_recv_resp(hd);
                             if(ret == 0){
                                 return 0;

@@ -33,25 +33,26 @@ int json_body_get_field(struct http_data *hd, char *field, char *data)
 
 int test_digest_login()
 {
-	struct http_data *hd = http_create();
-	http_set_uri(hd, "http://www-dev.securepilot.com:8080/v1/user/login");
-	http_set_method(hd, HTTP_GET);
-	http_set_user_pass(hd, "+8979000114", "gemtek");
-	if(http_perform(hd) == 0){
-		printf("\n===============================================\n");
-		printf("|%s|\n",hd->http.body.start);
-		printf("===============================================\n");
-	}
+    struct http_data *hd = http_create();
+    http_set_uri(hd, "http://www-dev.securepilot.com:8080/v1/user/login");
+    //http_set_uri(hd, "https://www-dev.securepilot.com/v1/user/login");
+    http_set_method(hd, HTTP_GET);
+    http_set_user_pass(hd, "+8979000114", "gemtek");
+    if(http_perform(hd) == 0){
+        printf("\n===============================================\n");
+        printf("|%s|\n",hd->http.body.start);
+        printf("===============================================\n");
+    }
     memset(session, 0, 256);
     json_body_get_field(hd, "token", session);
-	http_destroy_hd(hd);
+    http_destroy_hd(hd);
     return 0;
 }
 
 int test_http_post_with_data(){
-	struct http_data *hd = http_create();
-	http_set_uri(hd, "http://www-dev.securepilot.com:8080/msg/v1/get");
-	http_set_method(hd, HTTP_POST);
+    struct http_data *hd = http_create();
+    http_set_uri(hd, "http://www-dev.securepilot.com:8080/msg/v1/get");
+    http_set_method(hd, HTTP_POST);
     char buf[1024];
     char *tok = http_url_encode(session);
     int len ;
@@ -61,18 +62,21 @@ int test_http_post_with_data(){
         free(tok);
     }
     http_set_body(hd, buf, len);
-	if(http_perform(hd) == 0){
-		printf("\n===============================================\n");
-		printf("|%s|\n",hd->http.body.start);
-		printf("===============================================\n");
-	}
-	http_destroy_hd(hd);
+    if(http_perform(hd) == 0){
+        printf("\n===============================================\n");
+        printf("|%s|\n",hd->http.body.start);
+        printf("===============================================\n");
+    }
+    http_destroy_hd(hd);
     return 0;
 }
 
 int main()
 {
-    test_digest_login();
+    while(1){
+        test_digest_login();
+        sleep(1);
+    }
     test_http_post_with_data();
-	return 0;
+    return 0;
 }
