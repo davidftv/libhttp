@@ -15,12 +15,10 @@
 char from_hex(char ch) {
     return isdigit(ch) ? ch - '0' : tolower(ch) - 'A' + 10;
 }
-
 char to_hex(char code) {
     static char hex[] = "0123456789ABCDEF";
     return hex[code & 15];
 }
-
 char *http_url_encode(char *str) {
     char *pstr = str, *buf = malloc(strlen(str) * 3 + 1), *pbuf = buf;
     while (*pstr) {
@@ -55,6 +53,7 @@ char *http_url_decode(char *str) {
     return buf;
 }
 
+
 struct http_data *http_create() {
     int i = 0;
     struct http_data *hd = malloc(sizeof(struct http_data));
@@ -87,6 +86,27 @@ void http_block_socket(int sk)
 int http_set_uri(struct http_data *hd, char *uri) {
     if(hd){
         strncpy(hd->uri.server, uri, HTTP_PATH_LEN);
+        return 0;
+    }
+    return -1;
+}
+
+int http_set_cert_path(struct http_data *hd, char *cert, int verify_serv)
+{
+    if(cert){
+        strncpy(hd->cert_path, cert, FILE_PATH_LEN);
+        hd->cert_auth = verify_serv;
+    }
+    return -1;
+}
+
+int http_set_key_path(struct http_data *hd, char *key, char *pw)
+{
+    if(key){
+        strncpy(hd->key_path, key, FILE_PATH_LEN);
+        if(pw){
+            strncpy(hd->passwd, pw,SSL_KEY_PW_LEN);
+        }
         return 0;
     }
     return -1;
@@ -143,13 +163,16 @@ int http_send(struct http_data *hd, void *buf, int len) {
         return ret;
 }
 
-int http_recv(struct http_data *hd, void *buf, int len) {
+int http_recv(struct http_data *hd, void *buf, int len, int time) {
     int ret = -1;
+    struct timeval timeout;
+    timeout.tv_sec = time;
+    timeout.tv_usec = time;
     if(hd->sk > 0) {
         fd_set fset;
         FD_ZERO(&fset);
         FD_SET(hd->sk , &fset);
-        ret = select(hd->sk + 1, &fset, NULL, NULL, &hd->tv);
+        ret = select(hd->sk + 1, &fset, NULL, NULL, &timeout);
         if(ret > 0){
             ret = recv(hd->sk, buf, len, 0);
             if(ret <= 0) {
@@ -182,8 +205,11 @@ int https_send(struct http_data *hd, void *buf, int len) {
         return ret;
 }
 
-int https_recv(struct http_data *hd, void *buf, int len) {
+int https_recv(struct http_data *hd, void *buf, int len, int time) {
     int ret = -1;
+    struct timeval timeout;
+    timeout.tv_sec = time;
+    timeout.tv_usec = time;
     if(SSL_pending(hd->ssl) > 0) {
         ret = SSL_read(hd->ssl, buf, len);
         if(ret <= 0) {
@@ -193,7 +219,7 @@ int https_recv(struct http_data *hd, void *buf, int len) {
         fd_set fset;
         FD_ZERO(&fset);
         FD_SET(hd->sk , &fset);
-        ret = select(hd->sk + 1, &fset, NULL, NULL, &hd->tv);
+        ret = select(hd->sk + 1, &fset, NULL, NULL, &timeout);
         if(ret > 0){
             ret = SSL_read(hd->ssl, buf, len);
             if(ret <= 0) {
@@ -693,17 +719,16 @@ int recv_http_header(struct http_data *hd) {
     int len;
     char *buf = hd->http.buf;
     char *newline;
+    int keep = 0;
     for(;;) {
         newline = strstr(buf, "\r\n");
         if(newline == NULL){//First time read.
-            len = hd->recv(hd, hd->http.buf + hd->http.buf_offset, sizeof(hd->http.buf) - hd->http.buf_offset -1);
-            if(len > 0){
+            while((len = hd->recv(hd, hd->http.buf + hd->http.buf_offset, sizeof(hd->http.buf) - hd->http.buf_offset -1, keep?HTTP_KEEP_TIMEOUT:HTTP_TIMEOUT)) > 0)
+            {
                 hd->http.buf_offset += len;
                 hd->http.buf[hd->http.buf_offset] = '\0';
                 buf = hd->http.buf;
-            }else{
-                DBGHTTP("receive http header failure\n");
-                return -1;//recv failure
+                keep = 1;
             }
         }else{
             *newline = '\0';
@@ -760,12 +785,13 @@ int http_recv_normal_body(struct http_data *hd) {
             DBGHTTP("All body downloaded\n");
             break;
         }
-        len = hd->recv(hd, hd->http.buf, sizeof(hd->http.buf) - 1 );
+        len = hd->recv(hd, hd->http.buf, sizeof(hd->http.buf) - 1, HTTP_TIMEOUT );
         if(len > 0){
             hd->http.buf_offset = len;
         }else{
             DBGHTTP("recv body error\n");
-            return -1;
+            continue;
+            //return -1;
         }
     }
     return ret;
@@ -789,6 +815,10 @@ int http_recv_chunked_body(struct http_data *hd) {
             //DBGHTTP("buf:%s\n",ptr);
         }else{
             DBGHTTP("Not expected case\n");
+            hd->recv(hd, hd->http.buf, sizeof(hd->http.buf) - 1, HTTP_TIMEOUT);
+            memset(buf, 0, HTTP_RECV_BUF);
+            memcpy(buf, hd->http.buf, hd->http.buf_offset + 1);// Copy a buffer
+            ptr = buf;
             break;
         }
         newline = strstr(ptr, "\r\n");
@@ -872,7 +902,7 @@ int http_recv_chunked_body(struct http_data *hd) {
                 }
             }
         }
-        len = hd->recv(hd, hd->http.buf, sizeof(hd->http.buf) - 1);
+        len = hd->recv(hd, hd->http.buf, sizeof(hd->http.buf) - 1, HTTP_TIMEOUT);
         if(len > 0) { // keep recv chunked body
             hd->http.buf_offset = len;
         }else{
@@ -974,8 +1004,13 @@ int http_recv_resp(struct http_data *hd) {
             hd->http.chunked = 1;
             if(http_recv_chunked_body(hd) == 0){
                 if(http_decode_chunk_body(hd) ==0 ){
-                    hd->http.body.start[hd->http.content_len] = '\0';
-                    return 0;
+                    if(hd->http.body.start){
+                        hd->http.body.start[hd->http.content_len] = '\0';
+                        printf("chunked length %d\n",hd->http.content_len);
+                        return 0;
+                    }else{
+                        return -1;
+                    }
                 }else{
                     DBGHTTP("http decode chunk body error\n");
                     return -1;
@@ -989,7 +1024,6 @@ int http_recv_resp(struct http_data *hd) {
         }
         read_count ++;
     }
-    printf("Read End\nBody Length:%d\nBody Data:\n%s\n", hd->http.content_len, hd->http.body.start);
     return 0;
 }
 
@@ -1059,7 +1093,7 @@ int http_perform(struct http_data *hd) {
                         ret = 0;
                         break;
                     case 200:
-                        printf("200 OK\n%s\n", hd->http.body.start);
+                        //printf("200 OK\n%s\n", hd->http.body.start);
                         ret = 0;
                         break;
                     case 401:

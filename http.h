@@ -36,7 +36,8 @@
 
 #define FILE_PATH_LEN	128
 
-#define HTTP_TIMEOUT	10
+#define HTTP_TIMEOUT	3
+#define HTTP_KEEP_TIMEOUT    1
 
 #define SSL_DEPTH 		1
 #define SSL_KEY_PW_LEN	64
@@ -111,7 +112,7 @@ struct http_data {
     void                *body_send;
     int                 body_send_len;
 	int (*send)(struct http_data *, void *, int);
-	int (*recv)(struct http_data *, void *, int);
+	int (*recv)(struct http_data *, void *, int, int);
 #ifdef HAVE_OPENSSL
 	BIO 				*bio;
 	SSL_CTX				*ctx;
@@ -122,15 +123,15 @@ struct http_data {
 
 #define DBGHTTP(fmt, args...)  printf("[%s:%d]" fmt, __FILE__,__LINE__,##args)
 
-
+char *http_url_encode(char *str);
+char *http_url_decode(char *str);
 struct http_data *http_create();
 int http_set_uri(struct http_data *hd, char *uri);
+int http_set_cert_path(struct http_data *hd, char *cert, int verify_serv);
+int http_set_key_path(struct http_data *hd, char *key, char *pw);
 int http_perform(struct http_data *hd);
 int http_set_method(struct http_data *hd, int type);
 void http_destroy_hd(struct http_data *hd);
 int http_set_user_pass(struct http_data *hd, char *user, char *pass);
 int http_set_body(struct http_data *hd, void *data, int len);
-
-char *http_url_encode(char *str);
-char *http_url_decode(char *str);
 #endif

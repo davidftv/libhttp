@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include "http.h"
 
 char session[256];
@@ -30,7 +31,23 @@ int json_body_get_field(struct http_data *hd, char *field, char *data)
     return 0;
 }
 
-
+int test_cert_login()
+{
+    struct http_data *hd = http_create();
+    http_set_uri(hd, "https://www-dev.securepilot.com/v1/user/login");
+    http_set_cert_path(hd, "/home/kaija/key/dev.pem", 0); //Disable verify server
+    http_set_key_path(hd, "/home/kaija/key/key.pem", "gemtek");
+    http_set_method(hd, HTTP_GET);
+    if(http_perform(hd) == 0){
+        printf("\n===============================================\n");
+        printf("|%s|\n",hd->http.body.start);
+        printf("===============================================\n");
+    }
+    memset(session, 0, 256);
+    json_body_get_field(hd, "token", session);
+    http_destroy_hd(hd);
+    return 0;
+}
 int test_digest_login()
 {
     struct http_data *hd = http_create();
@@ -74,7 +91,7 @@ int test_http_post_with_data(){
 int main()
 {
     while(1){
-        test_digest_login();
+        test_cert_login();
         sleep(1);
     }
     test_http_post_with_data();
