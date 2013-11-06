@@ -36,7 +36,7 @@ int test_cert_login()
     struct http_data *hd = http_create();
     http_set_uri(hd, "https://www-dev.securepilot.com/v1/user/login");
     http_set_cert_path(hd, "/home/kaija/key/dev.pem", 0); //Disable verify server
-    http_set_key_path(hd, "/home/kaija/key/key.pem", "gemtek");
+    http_set_key_path(hd, "/home/kaija/key/dev.pem", "gemtek");
     http_set_method(hd, HTTP_GET);
     if(http_perform(hd) == 0){
         printf("\n===============================================\n");
@@ -50,6 +50,7 @@ int test_cert_login()
 }
 int test_digest_login()
 {
+    memset(session, 0, sizeof(session));
     struct http_data *hd = http_create();
     http_set_uri(hd, "http://www-dev.securepilot.com:8080/v1/user/login");
     //http_set_uri(hd, "https://www-dev.securepilot.com/v1/user/login");
@@ -63,6 +64,7 @@ int test_digest_login()
     memset(session, 0, 256);
     json_body_get_field(hd, "token", session);
     http_destroy_hd(hd);
+    if(strlen(session) == 0) return -1;
     return 0;
 }
 
@@ -91,8 +93,9 @@ int test_http_post_with_data(){
 int main()
 {
     while(1){
-        test_cert_login();
-        sleep(1);
+        //test_cert_login();
+        if (test_digest_login() == -1) exit(-1);
+        usleep(100000);
     }
     test_http_post_with_data();
     return 0;

@@ -71,6 +71,26 @@ struct http_data *http_create() {
     return hd;
 }
 
+void http_socket_sendtimeout(int sk, int timeout)
+{
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = 0;
+    if(setsockopt(sk, SOL_SOCKET, SO_SNDTIMEO, (const char *)&tv, sizeof(tv))!=0){
+        printf("setsockopt SO_SNDTIMEO failure %s\n", strerror(errno));
+    }
+}
+
+void http_socket_recvtimeout(int sk, int timeout)
+{
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = 0;
+    if(setsockopt(sk, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv))!=0){
+        printf("setsockopt SO_RCVTIMEO failure %s\n", strerror(errno));
+    }
+}
+
 void http_nonblock_socket(int sk)
 {
     unsigned long fc = 1;
@@ -144,16 +164,35 @@ int http_find_header(struct http_data *hd, char *title, char *out) {
     return -1;
 }
 
-int http_send(struct http_data *hd, void *buf, int len) {
+int http_send(struct http_data *hd, void *buf, int len, int timeout) {
+    int retry = 0;
     int ret = -1, sent = 0;
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = timeout;
     if(hd->sk > 0){
         do{
-            ret = send(hd->sk, (char *)buf + sent, len - sent, 0);
-            if(len > 0){
-                sent += ret;
-            }else{
-                //FIXME add error handle break do while
-                DBGHTTP("Error: send data failure %s\n", strerror(errno));
+            fd_set fset;
+            FD_ZERO(&fset);
+            FD_SET(hd->sk , &fset);
+            ret = select(hd->sk + 1, NULL, &fset, NULL, &tv);
+            if(ret > 0){
+                ret = send(hd->sk, (char *)buf + sent, len - sent, 0);
+                if(len > 0){
+                    if(errno == EAGAIN){
+                        retry ++;
+                        if(retry == 3){
+                            ret = -1;
+                            DBGHTTP("Error: send data retry timeout %s\n", strerror(errno));
+                            break;
+                        }
+                    }
+                    sent += ret;
+                }else{
+                    DBGHTTP("Error: send data failure %s\n", strerror(errno));
+                    ret = -1;
+                    break;
+                }
             }
         }while(len > 0 && sent < len);
     }
@@ -163,19 +202,19 @@ int http_send(struct http_data *hd, void *buf, int len) {
         return ret;
 }
 
-int http_recv(struct http_data *hd, void *buf, int len, int time) {
+int http_recv(struct http_data *hd, void *buf, int len, int timeout) {
     int ret = -1;
-    struct timeval timeout;
-    timeout.tv_sec = time;
-    timeout.tv_usec = time;
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = timeout;
     if(hd->sk > 0) {
         fd_set fset;
         FD_ZERO(&fset);
         FD_SET(hd->sk , &fset);
-        ret = select(hd->sk + 1, &fset, NULL, NULL, &timeout);
-        if(ret > 0){
+        ret = select(hd->sk + 1, &fset, NULL, NULL, &tv);
+        if(ret >= 0){
             ret = recv(hd->sk, buf, len, 0);
-            if(ret <= 0) {
+            if(ret < 0) {
                 DBGHTTP("Error: receive data failure %s\n", strerror(errno));
             }
         }else{
@@ -186,16 +225,21 @@ int http_recv(struct http_data *hd, void *buf, int len, int time) {
 }
 
 #ifdef HAVE_OPENSSL
-int https_send(struct http_data *hd, void *buf, int len) {
+int https_send(struct http_data *hd, void *buf, int len, int timeout) {
     int ret = -1, sent = 0;
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = timeout;
     if(hd->sk > 0){
         do{
             ret = SSL_write(hd->ssl, (char *)buf + sent, len - sent);
-            if(len > 0){
+            if(ret > 0){
                 sent += ret;
             }else{
                 //FIXME add error handle break do while
                 DBGHTTP("Error: send data failure %s\n", strerror(errno));
+                ret = -1;
+                break;
             }
         }while(len > 0 && sent < len);
     }
@@ -205,11 +249,12 @@ int https_send(struct http_data *hd, void *buf, int len) {
         return ret;
 }
 
-int https_recv(struct http_data *hd, void *buf, int len, int time) {
+int https_recv(struct http_data *hd, void *buf, int len, int timeout) {
     int ret = -1;
-    struct timeval timeout;
-    timeout.tv_sec = time;
-    timeout.tv_usec = time;
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = timeout;
+    DBGHTTP("\n");
     if(SSL_pending(hd->ssl) > 0) {
         ret = SSL_read(hd->ssl, buf, len);
         if(ret <= 0) {
@@ -219,14 +264,18 @@ int https_recv(struct http_data *hd, void *buf, int len, int time) {
         fd_set fset;
         FD_ZERO(&fset);
         FD_SET(hd->sk , &fset);
-        ret = select(hd->sk + 1, &fset, NULL, NULL, &timeout);
+        ret = select(hd->sk + 1, &fset, NULL, NULL, &tv);
         if(ret > 0){
             ret = SSL_read(hd->ssl, buf, len);
             if(ret <= 0) {
                 DBGHTTP("Error: receive data failure %s\n", strerror(errno));
             }
         }else{
-            DBGHTTP("Error: select socket failure %s\n", strerror(errno));
+            if(errno != 0) {
+                DBGHTTP("Error: select socket failure %d %s\n", errno, strerror(errno));
+            }else{
+                DBGHTTP("https recv select break\n");
+            }
         }
     }
     return ret;
@@ -533,12 +582,12 @@ int http_send_req(struct http_data *hd) {
 #ifdef DEBUG_HTTP
         DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s>>>>>>>>>>>>>>>>>>\n", http_data);
 #endif
-        hd->send(hd, http_data, send_byte);
+        hd->send(hd, http_data, send_byte, HTTP_SEND_TIMEOUT);
     }else{
 #ifdef DEBUG_HTTP
         DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s>>>>>>>>>>>>>>>>>>\n", header);
 #endif
-        hd->send(hd, header, len);
+        hd->send(hd, header, len, HTTP_SEND_TIMEOUT);
     }
     return 0;
 }
@@ -653,12 +702,12 @@ int http_send_auth_req(struct http_data *hd) {
 #ifdef DEBUG_HTTP
         DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s>>>>>>>>>>>>>>>>>>\n", http_data);
 #endif
-        hd->send(hd, http_data, send_byte);
+        hd->send(hd, http_data, send_byte, HTTP_SEND_TIMEOUT);
     }else{
 #ifdef DEBUG_HTTP
         DBGHTTP(">>>>>>>>>>>>>>>>>>\n%s>>>>>>>>>>>>>>>>>>\n", header);
 #endif
-        hd->send(hd, header, len);
+        hd->send(hd, header, len, HTTP_SEND_TIMEOUT);
     }
     return 0;
 }
@@ -715,7 +764,7 @@ int http_alloc_body_size(struct http_data *hd, int length){
 
 int recv_http_header(struct http_data *hd) {
     int begin = 0;
-    //int ret;
+    int ret = 0;
     int len;
     char *buf = hd->http.buf;
     char *newline;
@@ -723,12 +772,21 @@ int recv_http_header(struct http_data *hd) {
     for(;;) {
         newline = strstr(buf, "\r\n");
         if(newline == NULL){//First time read.
-            while((len = hd->recv(hd, hd->http.buf + hd->http.buf_offset, sizeof(hd->http.buf) - hd->http.buf_offset -1, keep?HTTP_KEEP_TIMEOUT:HTTP_TIMEOUT)) > 0)
+            len = hd->recv(hd, hd->http.buf + hd->http.buf_offset, sizeof(hd->http.buf) - hd->http.buf_offset -1, keep?HTTP_KEEP_TIMEOUT:HTTP_TIMEOUT);
+            if(len > 0)
             {
                 hd->http.buf_offset += len;
                 hd->http.buf[hd->http.buf_offset] = '\0';
                 buf = hd->http.buf;
                 keep = 1;
+                DBGHTTP("\n%s\n",hd->http.buf);
+                //FIXME if header is not completed
+            }else if(len == 0){
+                DBGHTTP("recv timeout\n");
+            }else{
+                DBGHTTP("Recv HTTP header failure \n%d  %d\n%s\n",len ,keep,hd->http.buf );
+                ret  = -1;
+                break;
             }
         }else{
             *newline = '\0';
@@ -757,7 +815,7 @@ int recv_http_header(struct http_data *hd) {
             buf = newline;
         }
     }
-    return 0;
+    return ret;
 }
 int http_recv_normal_body(struct http_data *hd) {
     int len = 0;
@@ -993,7 +1051,7 @@ int http_recv_resp(struct http_data *hd) {
         if(strlen(content_len) > 0){
             length = strtol(content_len, NULL, 10);
             hd->http.content_len = length;
-            //printf("HTTP Content-Length:%d\n", length);
+            printf("HTTP Content-Length:%d\n", length);
             if(http_recv_normal_body(hd) == 0){
                 return 0;
             }else{
@@ -1021,6 +1079,8 @@ int http_recv_resp(struct http_data *hd) {
             }
             //TODO parse chunk data
             DBGHTTP("Parse chunked data here\n");
+        }else{
+            DBGHTTP("No chunked and no content len\n%s\n");
         }
         read_count ++;
     }
@@ -1054,6 +1114,8 @@ int http_perform(struct http_data *hd) {
         return -1;
     }
     //http_nonblock_socket(hd->sk);
+    http_socket_sendtimeout(hd->sk, HTTP_TIMEOUT);
+    http_socket_recvtimeout(hd->sk, HTTP_TIMEOUT);
     if(connect(hd->sk, (struct sockaddr *)&(hd->srv_addr), sizeof(struct sockaddr)) == -1 &&
          errno != EINPROGRESS) {
         DBGHTTP("Error: Cannot connect to server\n");

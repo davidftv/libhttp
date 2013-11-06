@@ -17,31 +17,32 @@
 #endif //HAVE_OPENSSL
 
 
-#define HTTP_HEADER_NUM 32
-#define HTTP_NONCE_LEN	34
-#define HTTP_USER_LEN	64
-#define HTTP_PASS_LEN	64
+#define HTTP_HEADER_NUM         32
+#define HTTP_NONCE_LEN	        34
+#define HTTP_USER_LEN	        64
+#define HTTP_PASS_LEN	        64
 
-#define HTTP_AUTH_LEN	128
-#define HTTP_PATH_LEN	512
-#define HTTP_HOST_LEN	512
+#define HTTP_AUTH_LEN	        128
+#define HTTP_PATH_LEN   	    512
+#define HTTP_HOST_LEN	        512
 
-#define HTTP_URI_LEN	1024
-#define HTTP_RECV_BUF	1000
+#define HTTP_URI_LEN	        1024
+#define HTTP_RECV_BUF	        1000
 
-#define HTTP_HEADER_LEN	512
+#define HTTP_HEADER_LEN	        512
 
-#define DEFAULT_HTTP_PORT	80
-#define DEFAULT_HTTPS_PORT	443
+#define DEFAULT_HTTP_PORT	    80
+#define DEFAULT_HTTPS_PORT	    443
 
-#define FILE_PATH_LEN	128
+#define FILE_PATH_LEN	        128
 
-#define HTTP_TIMEOUT	3
-#define HTTP_KEEP_TIMEOUT    1
+#define HTTP_TIMEOUT	        3
+#define HTTP_SEND_TIMEOUT	    1
+#define HTTP_KEEP_TIMEOUT       3
 
-#define SSL_DEPTH 		1
-#define SSL_KEY_PW_LEN	64
-#define SSL_DATA_LEN	256
+#define SSL_DEPTH 		        1
+#define SSL_KEY_PW_LEN	        64
+#define SSL_DATA_LEN	        256
 
 #ifdef DEBUG_HTTP
 #define LOG printf
@@ -111,7 +112,7 @@ struct http_data {
 	char				password[HTTP_PASS_LEN];
     void                *body_send;
     int                 body_send_len;
-	int (*send)(struct http_data *, void *, int);
+	int (*send)(struct http_data *, void *, int, int);
 	int (*recv)(struct http_data *, void *, int, int);
 #ifdef HAVE_OPENSSL
 	BIO 				*bio;
