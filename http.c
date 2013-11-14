@@ -232,6 +232,10 @@ int https_send(struct http_data *hd, void *buf, int len, int timeout) {
     tv.tv_usec = timeout;
     if(hd->sk > 0){
         do{
+            fd_set fset;
+            FD_ZERO(&fset);
+            FD_SET(hd->sk , &fset);
+            ret = select(hd->sk + 1, NULL, &fset, NULL, &tv);
             ret = SSL_write(hd->ssl, (char *)buf + sent, len - sent);
             if(ret > 0){
                 sent += ret;
@@ -783,6 +787,7 @@ int recv_http_header(struct http_data *hd) {
                 //FIXME if header is not completed
             }else if(len == 0){
                 DBGHTTP("recv timeout\n");
+                break;
             }else{
                 DBGHTTP("Recv HTTP header failure \n%d  %d\n%s\n",len ,keep,hd->http.buf );
                 ret  = -1;
@@ -1051,7 +1056,7 @@ int http_recv_resp(struct http_data *hd) {
         if(strlen(content_len) > 0){
             length = strtol(content_len, NULL, 10);
             hd->http.content_len = length;
-            printf("HTTP Content-Length:%d\n", length);
+            printf("HTTP Content-Length:%ld\n", length);
             if(http_recv_normal_body(hd) == 0){
                 return 0;
             }else{
@@ -1080,7 +1085,7 @@ int http_recv_resp(struct http_data *hd) {
             //TODO parse chunk data
             DBGHTTP("Parse chunked data here\n");
         }else{
-            DBGHTTP("No chunked and no content len\n%s\n");
+            DBGHTTP("No chunked and no content len\n");
         }
         read_count ++;
     }
