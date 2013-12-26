@@ -50,7 +50,21 @@
 #define LOG
 #endif
 
-
+enum{
+    HTTP_SUCCESS,
+    HTTP_FAILURE,
+    HTTP_NOT_SUPP,
+    HTTP_ERR_PARAM,
+    HTTP_ERR_TIMEOUT,
+    HTTP_ERR_CONN,
+    HTTP_ERR_SEND,
+    HTTP_ERR_RECV,
+    HTTP_ERR_SSL,
+    HTTP_ERR_DECODE,
+    HTTP_ERR_SOCKET,
+    HTTP_ERR_OOM,
+    HTTP_ERR_UNKNOWN
+};
 
 enum{
 	PROTO_HTTP,

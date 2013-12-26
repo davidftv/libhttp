@@ -1,7 +1,7 @@
 
 
 OBJS=http.o main.o
-EXEC=httptest.app
+EXEC=httptest.exe
 
 CFLAGS  =  	-DHAVE_OPENSSL
 CFLAGS  +=  -DDEBUG_HTTP

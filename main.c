@@ -34,9 +34,9 @@ int json_body_get_field(struct http_data *hd, char *field, char *data)
 int test_cert_login()
 {
     struct http_data *hd = http_create();
-    http_set_uri(hd, "https://www-dev.securepilot.com/v1/device/login");
-    http_set_cert_path(hd, "/home/kaija/key/dev.pem", 0); //Disable verify server
-    http_set_key_path(hd, "/home/kaija/key/dev.pem", "gemtek");
+    http_set_uri(hd, "https://s4.securepilot.com/v1/device/login");
+    http_set_cert_path(hd, "/tmp/dev.pem", 0); //Disable verify server
+    http_set_key_path(hd, "/tmp/dev.pem", "gemtek");
     http_set_method(hd, HTTP_GET);
     if(http_perform(hd) == 0){
         printf("\n===============================================\n");
@@ -52,10 +52,10 @@ int test_digest_login()
 {
     memset(session, 0, sizeof(session));
     struct http_data *hd = http_create();
-    http_set_uri(hd, "http://www-dev.securepilot.com:8080/v1/device/login");
+    http_set_uri(hd, "https://s4.securepilot.com/v1/device/login");
     //http_set_uri(hd, "https://www-dev.securepilot.com/v1/user/login");
     http_set_method(hd, HTTP_GET);
-    http_set_user_pass(hd, "1234", "gemtek");
+    http_set_user_pass(hd, "12345", "world");
     if(http_perform(hd) == 0){
         printf("\n===============================================\n");
         printf("|%s|\n",hd->http.body.start);
@@ -92,10 +92,8 @@ int test_http_post_with_data(){
 
 int main()
 {
-    while(1){
-        test_cert_login();
-        //if (test_digest_login() == -1) exit(-1);
-    }
-    test_http_post_with_data();
+    test_cert_login();
+    //test_digest_login();
+    //test_http_post_with_data();
     return 0;
 }
